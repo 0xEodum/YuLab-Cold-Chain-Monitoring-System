@@ -1,13 +1,15 @@
-# Cold Chain Monitoring — Blockchain backend
+# Cold Chain Monitoring
 
-Smart-contract бэкенд прототипа из [проектной документации](./Blockchain-based%20Cold%20Chain%20Monitoring%20System%20—%20Project%20Documentation.md):
+Прототип из из [проектной документации](./Blockchain-based%20Cold%20Chain%20Monitoring%20System%20—%20Project%20Documentation.md):
 контракт `ColdChain` хранит условия поставки, принимает подписанные IoT-датчиком показания температуры,
-неизменяемо фиксирует нарушения и автоматически рассчитывает выплату перевозчику.
+неизменяемо фиксирует нарушения и автоматически рассчитывает выплату перевозчику; веб-интерфейс в `frontend/`
+показывает эти механизмы в работе от лица трёх участников и эмулирует датчик прямо в браузере.
 
 ## Стек
 
 - Solidity 0.8.37 (та же версия, что в контейнере `ghcr.io/argotorg/solc:stable`), OpenZeppelin 5 (ECDSA)
 - Hardhat 3 + ethers v6 + mocha/chai — компиляция, локальная сеть, тесты
+- Frontend: React 19 + Vite 7 + ethers v6, vitest + Testing Library (папка `frontend/`)
 - Node.js ≥ 22 (ESM)
 
 ## Быстрый старт
@@ -19,15 +21,24 @@ npm run coverage         # покрытие ColdChain.sol — 100 %
 npm run demo             # сквозной сценарий из §9 документации на in-process сети
 ```
 
-Работа с отдельной нодой (так к контракту будет подключаться фронтенд):
+Работа с отдельной нодой и веб-интерфейсом:
 
 ```bash
 npm run node             # терминал 1: JSON-RPC на http://127.0.0.1:8545, chainId 31337
 npm run deploy           # терминал 2: деплой → deployments/localhost.json (адрес + ABI)
-npm run shipment         # создать поставку #N и принять её перевозчиком
-SHIPMENT_ID=1 PROFILE=spike npm run gateway   # эмулятор датчика/шлюза: подписывает и шлёт показания
-npm run demo:localhost   # тот же сквозной сценарий, но против ноды
+npm run frontend:install # один раз
+npm run frontend         # терминал 3: http://localhost:5173
 ```
+
+Дополнительно, без UI:
+
+```bash
+npm run shipment         # создать поставку #N и принять её перевозчиком
+SHIPMENT_ID=1 PROFILE=spike npm run gateway   # CLI-эмулятор датчика/шлюза (UI подхватит его показания по событиям)
+npm run demo:localhost   # сквозной сценарий против ноды
+```
+
+После перезапуска ноды деплой нужно повторить (`npm run deploy`) — интерфейс сам подскажет это баннером.
 
 Сборка контейнерным компилятором (ABI + bytecode в `build-solc/`, те же настройки, что у Hardhat):
 
@@ -93,9 +104,43 @@ scripts/compile-docker.js            сборка через ghcr.io/argotorg/so
 scripts/lib/sensor.js                readingDigest / signReading / hash батча (зеркало контракта)
 scripts/lib/accounts.js              ключ демо-датчика (hardhat account #9), SENSOR_PRIVATE_KEY
 scripts/lib/deployment.js            чтение/запись deployments/*.json
+frontend/src/lib/                    chain (provider, ABI, мапперы), roles (ключи демо-ролей), sensor, errors, format
+frontend/src/hooks/                  useChain (опрос блоков), useShipments (список/детали/балансы), useTransaction
+frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentDetails, SensorPanel, TemperatureChart, EventLog…
 ```
 
-## Для фронтенда
+## Фронтенд (`frontend/`)
+
+Один экран, три роли. В шапке — переключатель «Производитель / Перевозчик / Получатель»: это Hardhat-аккаунты #1–#3,
+ключи которых живут в странице (только для локальной сети), поэтому демонстрация идёт в одном окне без MetaMask.
+Рядом с каждой ролью — баланс ETH и сумма «к выводу» с кнопкой `withdraw()`.
+
+Что показывает интерфейс:
+
+- **Список поставок и форма создания** (для производителя): диапазон температур, escrow в ETH, штраф в %.
+  Валидация повторяет проверки контракта, чтобы ошибка была видна до отправки транзакции.
+- **Карточка поставки**: условия, статус, `previewSettlement` — сколько получит перевозчик и что вернётся
+  производителю, если завершить сейчас; после завершения — итог из события `ShipmentDelivered`/`ShipmentExpired`.
+- **Действия по роли**: `startTransit`, `cancelShipment`, `confirmDelivery`, `settleExpired` (с обратным отсчётом
+  30 дней). Кнопки показываются только тем, кому контракт разрешит вызов, а отказ контракта декодируется в
+  понятное сообщение (`Unauthorized`, `InvalidStatus`, `InvalidSignature`, `SequenceMismatch`, …).
+- **График температуры** по событиям `ReadingSubmitted` с полосой допустимого диапазона и маркерами нарушений,
+  таблица показаний с номером блока и хэшем транзакции.
+- **Панель «Датчик и шлюз»** (пока поставка активна): слайдер температуры, ручная отправка и автоматический режим
+  (профили `normal` / `spike`, как в CLI-шлюзе), якорение хэша батча. Режимы нечестного шлюза показывают, что
+  именно отвергает контракт: подмена температуры после подписи и чужой ключ → `InvalidSignature`,
+  пропуск показания → `SequenceMismatch`.
+- **Предупреждение о телеметрии**: если показаний нет или поток оборвался (>15 мин), карточка явно говорит об
+  этом — это документированный пробел MVP (контракт не требует минимума показаний), и получатель должен видеть его
+  до `confirmDelivery`.
+- **История в блокчейне**: все события поставки с номером блока и tx-хэшем — неизменяемый журнал.
+
+Технически: `frontend/src/lib/chain.js` берёт адрес и ABI из `deployments/localhost.json`, подпись показаний
+переиспользует `scripts/lib/sensor.js` (тот же код, что у CLI-шлюза). Состояние перечитывается при появлении нового
+блока (опрос `eth_blockNumber` раз в секунду). Тесты: `npm run frontend:test` — 43 теста, включая сквозной сценарий
+на in-memory заглушке контракта; покрытие ~93 %.
+
+## Для фронтенда (справочно)
 
 - Адрес и ABI: `deployments/localhost.json` (адрес детерминирован: `0x5FbDB2315678afecb367f032d93F642f64180aa3` при свежей ноде).
 - Роли — стандартные аккаунты Hardhat: `#1` manufacturer, `#2` carrier, `#3` receiver, `#9` — ключ демо-датчика

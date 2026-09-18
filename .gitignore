@@ -4,3 +4,6 @@ cache/
 coverage/
 build-solc/
 .env
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/

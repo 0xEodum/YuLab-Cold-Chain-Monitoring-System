@@ -4,7 +4,7 @@
   "chainId": "31337",
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "txHash": "0x7cdb3371554a82822ae4aee6a0907fd6de5e4db33f5ec60400857bd7b1d967a6",
-  "deployedAt": "2026-09-18T06:20:18.927Z",
+  "deployedAt": "2026-09-18T06:58:11.547Z",
   "abi": [
     {
       "type": "error",
