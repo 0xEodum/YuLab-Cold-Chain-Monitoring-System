@@ -1,0 +1,32 @@
+{
+  "name": "cold-chain-blockchain",
+  "version": "0.1.0",
+  "description": "Blockchain-based Cold Chain Monitoring System - smart contract backend",
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile",
+    "compile:docker": "node scripts/compile-docker.js",
+    "coverage": "hardhat test --coverage",
+    "node": "hardhat node",
+    "deploy": "hardhat run scripts/deploy.js --network localhost",
+    "demo": "hardhat run scripts/demo.js",
+    "demo:localhost": "hardhat run scripts/demo.js --network localhost",
+    "gateway": "hardhat run scripts/sensor-gateway.js --network localhost",
+    "shipment": "hardhat run scripts/create-shipment.js --network localhost"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.1.0",
+    "@nomicfoundation/hardhat-ethers-chai-matchers": "^3.0.11",
+    "@nomicfoundation/hardhat-mocha": "^3.1.0",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.11",
+    "@openzeppelin/contracts": "^5.6.1",
+    "chai": "^5.3.3",
+    "ethers": "^6.17.0",
+    "hardhat": "^3.17.0",
+    "mocha": "^11.8.0"
+  }
+}
