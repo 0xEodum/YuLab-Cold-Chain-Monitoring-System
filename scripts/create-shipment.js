@@ -15,7 +15,7 @@
 import { network } from "hardhat";
 import { toDeci } from "./lib/sensor.js";
 import { loadDeployment } from "./lib/deployment.js";
-import { sensorWalletFromEnv } from "./lib/accounts.js";
+import { ensureDemoSensorRegistered, sensorWalletFromEnv } from "./lib/accounts.js";
 
 const { ethers, networkName } = await network.getOrCreate();
 
@@ -31,6 +31,11 @@ const { address, abi } = await loadDeployment(networkName);
 const [, manufacturer, carrier, receiver] = await ethers.getSigners();
 const sensor = sensorWalletFromEnv(networkName);
 const coldChain = new ethers.Contract(address, abi, manufacturer);
+
+// A shipment may only be assigned to a registered sensor; put it on the registry if needed.
+const [registrar] = await ethers.getSigners();
+const registration = await ensureDemoSensorRegistered(coldChain.connect(registrar), sensor.address);
+if (registration !== "already-active") console.log(`Sensor ${sensor.address} ${registration}`);
 
 const tx = await coldChain.createShipment(product, carrier.address, receiver.address, sensor.address, toDeci(minC), toDeci(maxC), penaltyBps, {
   value: ethers.parseEther(paymentEth),

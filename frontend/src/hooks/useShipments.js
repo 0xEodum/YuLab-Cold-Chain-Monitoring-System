@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { toBeHex, zeroPadValue } from "ethers";
-import { CONTRACT_ADDRESS, coldChainInterface, resolveSettlement, toAnchor, toEvent, toReading, toShipment, toViolation } from "../lib/chain.js";
+import {
+  CONTRACT_ADDRESS,
+  coldChainInterface,
+  resolveSettlement,
+  toAnchor,
+  toEvent,
+  toReading,
+  toSensorRecord,
+  toShipment,
+  toViolation,
+} from "../lib/chain.js";
 
 /** All shipments, newest first. Re-read on every block. */
 export function useShipmentList(contract, blockNumber, enabled) {
@@ -31,6 +41,35 @@ export function useShipmentList(contract, blockNumber, enabled) {
   }, [contract, blockNumber, enabled]);
 
   return { shipments, error };
+}
+
+/** Registry record of one sensor. Re-read on every block so registry changes show up at once. */
+export function useSensorRecord(contract, sensorAddress, blockNumber, enabled) {
+  const [record, setRecord] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!enabled || !sensorAddress) return undefined;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const raw = await contract.getSensor(sensorAddress);
+        if (!cancelled) {
+          setRecord(toSensorRecord(sensorAddress, raw));
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contract, sensorAddress, blockNumber, enabled]);
+
+  return { record, error };
 }
 
 /** Everything the UI shows about one shipment: storage views + full event history from logs. */

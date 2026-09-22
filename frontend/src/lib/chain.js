@@ -60,6 +60,18 @@ export function toShipment(id, raw) {
   };
 }
 
+/** `getSensor` struct -> plain record. `registeredAt === 0` means "never registered". */
+export function toSensorRecord(address, raw) {
+  return {
+    address,
+    deviceIdHash: raw.deviceIdHash,
+    registeredBy: raw.registeredBy,
+    registeredAt: Number(raw.registeredAt),
+    active: Boolean(raw.active),
+    isRegistered: Number(raw.registeredAt) > 0,
+  };
+}
+
 export function toViolation(raw) {
   return { temperature: Number(raw.temperature), timestamp: Number(raw.timestamp), recordedAt: Number(raw.recordedAt) };
 }
@@ -80,6 +92,7 @@ export function toReading(log) {
     sequence: Number(log.args.sequence),
     temperature: Number(log.args.temperature),
     timestamp: Number(log.args.timestamp),
+    telemetryHash: log.args.telemetryHash,
     reporter: log.args.reporter,
     inRange: Boolean(log.args.inRange),
     blockNumber: log.blockNumber,

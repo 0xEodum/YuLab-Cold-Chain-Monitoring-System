@@ -1,6 +1,11 @@
 import { expect } from "chai";
 import { network } from "hardhat";
-import { readingDigest as offchainReadingDigest, signReading as offchainSignReading } from "../scripts/lib/sensor.js";
+import {
+  buildMeasurement,
+  readingDigest as offchainReadingDigest,
+  signReading as offchainSignReading,
+  telemetryRecordHash,
+} from "../scripts/lib/sensor.js";
 
 const { ethers, networkHelpers } = await network.getOrCreate();
 const { time } = networkHelpers;
@@ -14,12 +19,17 @@ const PRODUCT = "Vaccine Batch A17";
 
 const Status = { CREATED: 0n, IN_TRANSIT: 1n, COMPROMISED: 2n, DELIVERED: 3n, CANCELLED: 4n, EXPIRED: 5n };
 
+const DEVICE_ID = "COLD-SENSOR-001";
+const DEVICE_ID_HASH = ethers.keccak256(ethers.toUtf8Bytes(DEVICE_ID));
+
 async function deployFixture() {
   const [deployer, manufacturer, carrier, receiver, stranger] = await ethers.getSigners();
   // The sensor only signs; it never sends transactions, so a random key is enough.
   const sensor = ethers.Wallet.createRandom();
+  // The deployer is admin + first registrar (see the constructor).
   const coldChain = await ethers.deployContract("ColdChain", [], deployer);
-  return { coldChain, manufacturer, carrier, receiver, stranger, sensor };
+  await coldChain.connect(deployer).registerSensor(sensor.address, DEVICE_ID_HASH);
+  return { coldChain, deployer, manufacturer, carrier, receiver, stranger, sensor };
 }
 
 async function createShipment(ctx, overrides = {}) {
@@ -49,8 +59,13 @@ async function inTransitFixture() {
   return { ...ctx, shipmentId: 1n };
 }
 
-async function signReading(ctx, shipmentId, sequence, temperature, timestamp, signer = ctx.sensor) {
-  const digest = await ctx.coldChain.readingDigest(shipmentId, sequence, temperature, timestamp);
+/** The off-chain record a reading commits to, and its hash. */
+function measurementFor(shipmentId, sequence, temperature, timestamp) {
+  return buildMeasurement({ shipmentId, sequence, temperature, timestamp, deviceId: DEVICE_ID });
+}
+
+async function signReading(ctx, shipmentId, sequence, temperature, timestamp, telemetryHash, signer = ctx.sensor) {
+  const digest = await ctx.coldChain.readingDigest(shipmentId, sequence, temperature, timestamp, telemetryHash);
   return signer.signMessage(ethers.getBytes(digest));
 }
 
@@ -58,11 +73,130 @@ async function signReading(ctx, shipmentId, sequence, temperature, timestamp, si
 async function submitReading(ctx, temperature, timestamp, opts = {}) {
   const { signer = ctx.sensor, relayer = ctx.stranger, shipmentId = ctx.shipmentId } = opts;
   const sequence = opts.sequence ?? (await ctx.coldChain.getShipment(shipmentId)).readingCount;
-  const signature = await signReading(ctx, shipmentId, sequence, temperature, timestamp, signer);
-  return ctx.coldChain.connect(relayer).submitReading(shipmentId, sequence, temperature, timestamp, signature);
+  const telemetryHash = opts.telemetryHash ?? measurementFor(shipmentId, sequence, temperature, timestamp).telemetryHash;
+  const signature = await signReading(ctx, shipmentId, sequence, temperature, timestamp, telemetryHash, signer);
+  return ctx.coldChain
+    .connect(relayer)
+    .submitReading(shipmentId, sequence, temperature, timestamp, telemetryHash, signature);
 }
 
 describe("ColdChain", function () {
+  describe("sensor registry", function () {
+    it("makes the deployer the admin and the first registrar", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      expect(await ctx.coldChain.admin()).to.equal(ctx.deployer.address);
+      expect(await ctx.coldChain.isSensorRegistrar(ctx.deployer.address)).to.equal(true);
+      expect(await ctx.coldChain.isSensorRegistrar(ctx.manufacturer.address)).to.equal(false);
+    });
+
+    it("stores the device commitment and marks the sensor active", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      const fresh = ethers.Wallet.createRandom();
+      const idHash = ethers.keccak256(ethers.toUtf8Bytes("COLD-SENSOR-002"));
+
+      await expect(ctx.coldChain.connect(ctx.deployer).registerSensor(fresh.address, idHash))
+        .to.emit(ctx.coldChain, "SensorRegistered")
+        .withArgs(fresh.address, idHash, ctx.deployer.address);
+
+      const record = await ctx.coldChain.getSensor(fresh.address);
+      expect(record.deviceIdHash).to.equal(idHash);
+      expect(record.registeredBy).to.equal(ctx.deployer.address);
+      expect(record.active).to.equal(true);
+      expect(record.registeredAt).to.equal(await time.latest());
+      expect(await ctx.coldChain.isSensorActive(fresh.address)).to.equal(true);
+    });
+
+    it("rejects registration by anyone but a registrar", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      await expect(ctx.coldChain.connect(ctx.manufacturer).registerSensor(ctx.stranger.address, DEVICE_ID_HASH))
+        .to.be.revertedWithCustomError(ctx.coldChain, "Unauthorized")
+        .withArgs(ctx.manufacturer.address);
+    });
+
+    it("rejects a zero address, an empty device hash and a duplicate registration", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      const registrar = ctx.coldChain.connect(ctx.deployer);
+
+      await expect(registrar.registerSensor(ethers.ZeroAddress, DEVICE_ID_HASH))
+        .to.be.revertedWithCustomError(ctx.coldChain, "ZeroAddress")
+        .withArgs("sensor");
+      await expect(registrar.registerSensor(ctx.stranger.address, ethers.ZeroHash)).to.be.revertedWithCustomError(
+        ctx.coldChain,
+        "EmptyDeviceIdHash",
+      );
+      await expect(registrar.registerSensor(ctx.sensor.address, DEVICE_ID_HASH))
+        .to.be.revertedWithCustomError(ctx.coldChain, "SensorAlreadyRegistered")
+        .withArgs(ctx.sensor.address);
+    });
+
+    it("lets the admin grant and revoke registrars", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      const fresh = ethers.Wallet.createRandom();
+
+      await expect(ctx.coldChain.connect(ctx.deployer).setRegistrar(ctx.manufacturer.address, true))
+        .to.emit(ctx.coldChain, "RegistrarSet")
+        .withArgs(ctx.manufacturer.address, true);
+      await ctx.coldChain.connect(ctx.manufacturer).registerSensor(fresh.address, DEVICE_ID_HASH);
+      expect(await ctx.coldChain.isSensorActive(fresh.address)).to.equal(true);
+
+      await ctx.coldChain.connect(ctx.deployer).setRegistrar(ctx.manufacturer.address, false);
+      await expect(
+        ctx.coldChain.connect(ctx.manufacturer).registerSensor(ethers.Wallet.createRandom().address, DEVICE_ID_HASH),
+      ).to.be.revertedWithCustomError(ctx.coldChain, "Unauthorized");
+    });
+
+    it("rejects registrar changes by anyone but the admin, and a zero account", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      await expect(ctx.coldChain.connect(ctx.manufacturer).setRegistrar(ctx.stranger.address, true))
+        .to.be.revertedWithCustomError(ctx.coldChain, "Unauthorized")
+        .withArgs(ctx.manufacturer.address);
+      await expect(ctx.coldChain.connect(ctx.deployer).setRegistrar(ethers.ZeroAddress, true))
+        .to.be.revertedWithCustomError(ctx.coldChain, "ZeroAddress")
+        .withArgs("account");
+    });
+
+    it("refuses to create a shipment for an unregistered or retired sensor", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      const unknown = ethers.Wallet.createRandom();
+
+      await expect(createShipment(ctx, { sensor: unknown.address }))
+        .to.be.revertedWithCustomError(ctx.coldChain, "SensorNotRegistered")
+        .withArgs(unknown.address);
+
+      await expect(ctx.coldChain.connect(ctx.deployer).setSensorActive(ctx.sensor.address, false))
+        .to.emit(ctx.coldChain, "SensorActiveSet")
+        .withArgs(ctx.sensor.address, false, ctx.deployer.address);
+      await expect(createShipment(ctx))
+        .to.be.revertedWithCustomError(ctx.coldChain, "SensorInactive")
+        .withArgs(ctx.sensor.address);
+
+      // ...and a reactivated sensor is usable again
+      await ctx.coldChain.connect(ctx.deployer).setSensorActive(ctx.sensor.address, true);
+      await expect(createShipment(ctx)).to.emit(ctx.coldChain, "ShipmentCreated");
+    });
+
+    it("does not disturb shipments already in transit when a sensor is retired", async function () {
+      // Retiring a device must not rewrite history or strand a shipment: readings keep verifying
+      // against the key fixed at creation time.
+      const ctx = await networkHelpers.loadFixture(inTransitFixture);
+      await ctx.coldChain.connect(ctx.deployer).setSensorActive(ctx.sensor.address, false);
+
+      await expect(submitReading(ctx, 45, await time.latest())).to.emit(ctx.coldChain, "ReadingSubmitted");
+      await expect(ctx.coldChain.connect(ctx.receiver).confirmDelivery(1)).to.emit(ctx.coldChain, "ShipmentDelivered");
+    });
+
+    it("rejects toggling a sensor that was never registered", async function () {
+      const ctx = await networkHelpers.loadFixture(deployFixture);
+      const unknown = ethers.Wallet.createRandom();
+      await expect(ctx.coldChain.connect(ctx.deployer).setSensorActive(unknown.address, false))
+        .to.be.revertedWithCustomError(ctx.coldChain, "SensorNotRegistered")
+        .withArgs(unknown.address);
+      await expect(ctx.coldChain.connect(ctx.manufacturer).setSensorActive(ctx.sensor.address, false))
+        .to.be.revertedWithCustomError(ctx.coldChain, "Unauthorized")
+        .withArgs(ctx.manufacturer.address);
+    });
+  });
+
   describe("createShipment", function () {
     it("stores shipment terms, escrows payment and emits ShipmentCreated", async function () {
       const ctx = await networkHelpers.loadFixture(deployFixture);
@@ -217,9 +351,10 @@ describe("ColdChain", function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
       const ts = await time.latest();
 
+      const { telemetryHash } = measurementFor(1n, 0, 42, ts);
       await expect(submitReading(ctx, 42, ts))
         .to.emit(ctx.coldChain, "ReadingSubmitted")
-        .withArgs(1n, 0, 42, ts, ctx.stranger.address, true)
+        .withArgs(1n, 0, 42, ts, telemetryHash, ctx.stranger.address, true)
         .and.not.to.emit(ctx.coldChain, "TemperatureViolation");
 
       const s = await ctx.coldChain.getShipment(1);
@@ -277,7 +412,45 @@ describe("ColdChain", function () {
       expect(violations.map((v) => v.temperature)).to.deep.equal([117n, 121n]);
     });
 
-    it("rejects a reading signed by an unregistered key", async function () {
+    it("rejects a reading with no telemetry commitment", async function () {
+      const ctx = await networkHelpers.loadFixture(inTransitFixture);
+      await expect(submitReading(ctx, 42, await time.latest(), { telemetryHash: ethers.ZeroHash }))
+        .to.be.revertedWithCustomError(ctx.coldChain, "EmptyTelemetryHash");
+    });
+
+    it("rejects a reading whose off-chain record was swapped after signing", async function () {
+      // The temperature and the signature are genuine; only the telemetry commitment is swapped
+      // for the hash of a different record. The signature covers both, so it no longer verifies —
+      // a gateway cannot keep the on-chain reading while pointing it at doctored off-chain data.
+      const ctx = await networkHelpers.loadFixture(inTransitFixture);
+      const ts = await time.latest();
+      const honest = measurementFor(1n, 0, 127, ts);
+      const forged = telemetryRecordHash({ ...honest.record, temperature: 45 });
+      expect(forged).to.not.equal(honest.telemetryHash);
+
+      const signature = await signReading(ctx, 1n, 0, 127, ts, honest.telemetryHash);
+      await expect(
+        ctx.coldChain.connect(ctx.carrier).submitReading(1, 0, 127, ts, forged, signature),
+      ).to.be.revertedWithCustomError(ctx.coldChain, "InvalidSignature");
+    });
+
+    it("anchors the off-chain record so later tampering with it is provable", async function () {
+      // This is the hybrid architecture's payoff: the bulk telemetry lives off-chain, but every
+      // record is committed to on-chain by a hash the sensor itself signed.
+      const ctx = await networkHelpers.loadFixture(inTransitFixture);
+      const ts = await time.latest();
+      const { record } = measurementFor(1n, 0, 127, ts);
+      await submitReading(ctx, 127, ts);
+
+      const [log] = await ctx.coldChain.queryFilter(ctx.coldChain.filters.ReadingSubmitted(1n));
+      expect(log.args.telemetryHash).to.equal(telemetryRecordHash(record));
+
+      // The off-chain store is edited to hide the excursion; the on-chain commitment does not move.
+      const doctored = { ...record, temperature: 45 };
+      expect(telemetryRecordHash(doctored)).to.not.equal(log.args.telemetryHash);
+    });
+
+    it("rejects a reading signed by a key other than the shipment's sensor", async function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
       const rogueSensor = ethers.Wallet.createRandom();
       await expect(submitReading(ctx, 42, await time.latest(), { signer: rogueSensor })).to.be.revertedWithCustomError(
@@ -289,17 +462,19 @@ describe("ColdChain", function () {
     it("rejects a reading whose temperature was altered after signing", async function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
       const ts = await time.latest();
-      const signature = await signReading(ctx, 1n, 0, 127, ts); // sensor saw 12.7°C
+      const { telemetryHash } = measurementFor(1n, 0, 127, ts); // sensor saw 12.7°C
+      const signature = await signReading(ctx, 1n, 0, 127, ts, telemetryHash);
       // Carrier tries to relay it as 5.2°C
-      await expect(ctx.coldChain.connect(ctx.carrier).submitReading(1, 0, 52, ts, signature)).to.be.revertedWithCustomError(
-        ctx.coldChain,
-        "InvalidSignature",
-      );
+      await expect(
+        ctx.coldChain.connect(ctx.carrier).submitReading(1, 0, 52, ts, telemetryHash, signature),
+      ).to.be.revertedWithCustomError(ctx.coldChain, "InvalidSignature");
     });
 
     it("rejects a malformed signature", async function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
-      await expect(ctx.coldChain.submitReading(1, 0, 42, await time.latest(), "0x1234")).to.be.revertedWithCustomError(
+      const ts = await time.latest();
+      const { telemetryHash } = measurementFor(1n, 0, 42, ts);
+      await expect(ctx.coldChain.submitReading(1, 0, 42, ts, telemetryHash, "0x1234")).to.be.revertedWithCustomError(
         ctx.coldChain,
         "InvalidSignature",
       );
@@ -368,8 +543,9 @@ describe("ColdChain", function () {
       await createShipment(ctx); // shipment #2, same sensor
       await ctx.coldChain.connect(ctx.carrier).startTransit(2);
       const ts = await time.latest();
-      const signature = await signReading(ctx, 2n, 0, 42, ts);
-      await expect(ctx.coldChain.submitReading(1, 0, 42, ts, signature)).to.be.revertedWithCustomError(
+      const { telemetryHash } = measurementFor(2n, 0, 42, ts);
+      const signature = await signReading(ctx, 2n, 0, 42, ts, telemetryHash);
+      await expect(ctx.coldChain.submitReading(1, 0, 42, ts, telemetryHash, signature)).to.be.revertedWithCustomError(
         ctx.coldChain,
         "InvalidSignature",
       );
@@ -379,9 +555,10 @@ describe("ColdChain", function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
       const other = await ethers.deployContract("ColdChain");
       const ts = await time.latest();
-      const foreignDigest = await other.readingDigest(1, 0, 42, ts);
+      const { telemetryHash } = measurementFor(1n, 0, 42, ts);
+      const foreignDigest = await other.readingDigest(1, 0, 42, ts, telemetryHash);
       const signature = await ctx.sensor.signMessage(ethers.getBytes(foreignDigest));
-      await expect(ctx.coldChain.submitReading(1, 0, 42, ts, signature)).to.be.revertedWithCustomError(
+      await expect(ctx.coldChain.submitReading(1, 0, 42, ts, telemetryHash, signature)).to.be.revertedWithCustomError(
         ctx.coldChain,
         "InvalidSignature",
       );
@@ -392,14 +569,32 @@ describe("ColdChain", function () {
       const { chainId } = await ethers.provider.getNetwork();
       const ts = await time.latest();
 
-      expect(offchainReadingDigest(chainId, ctx.coldChain.target, 1n, 0, -15, ts)).to.equal(
-        await ctx.coldChain.readingDigest(1, 0, -15, ts),
-      );
+      const cold = measurementFor(1n, 0, -15, ts);
+      expect(
+        offchainReadingDigest({
+          chainId,
+          contractAddress: ctx.coldChain.target,
+          shipmentId: 1n,
+          sequence: 0,
+          temperature: -15,
+          timestamp: ts,
+          telemetryHash: cold.telemetryHash,
+        }),
+      ).to.equal(await ctx.coldChain.readingDigest(1, 0, -15, ts, cold.telemetryHash));
 
-      const signature = await offchainSignReading(ctx.sensor, chainId, ctx.coldChain.target, 1n, 0, 42, ts);
-      await expect(ctx.coldChain.connect(ctx.stranger).submitReading(1, 0, 42, ts, signature))
+      const { telemetryHash } = measurementFor(1n, 0, 42, ts);
+      const signature = await offchainSignReading(ctx.sensor, {
+        chainId,
+        contractAddress: ctx.coldChain.target,
+        shipmentId: 1n,
+        sequence: 0,
+        temperature: 42,
+        timestamp: ts,
+        telemetryHash,
+      });
+      await expect(ctx.coldChain.connect(ctx.stranger).submitReading(1, 0, 42, ts, telemetryHash, signature))
         .to.emit(ctx.coldChain, "ReadingSubmitted")
-        .withArgs(1n, 0, 42, ts, ctx.stranger.address, true);
+        .withArgs(1n, 0, 42, ts, telemetryHash, ctx.stranger.address, true);
     });
   });
 

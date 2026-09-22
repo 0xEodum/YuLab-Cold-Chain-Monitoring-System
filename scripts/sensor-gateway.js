@@ -12,11 +12,18 @@
  *   BASE_TEMP_C          steady-state temperature in °C (default 4.5)
  *   PROFILE              "normal" | "spike" — spike injects an excursion to 12.7°C after a few readings
  *   ANCHOR_EVERY         anchor a telemetry batch hash every N readings, 0 disables (default 5)
+ *   DEVICE_ID            off-chain device identity written into each record
+ *
+ * Each measurement is written twice: the full record goes to the off-chain store
+ * (telemetry/<network>-shipment-<id>.json), and the chain gets the compact reading plus the hash
+ * of that record. Both are covered by one sensor signature, so `verify-telemetry.js` can later
+ * prove whether the store still holds what the device actually measured.
  */
 import { network } from "hardhat";
-import { signReading, telemetryBatchHash, toDeci, formatTemp } from "./lib/sensor.js";
+import { buildMeasurement, signReading, telemetryBatchHash, toDeci, formatTemp } from "./lib/sensor.js";
 import { loadDeployment } from "./lib/deployment.js";
-import { sensorWalletFromEnv } from "./lib/accounts.js";
+import { DEMO_DEVICE_ID, sensorWalletFromEnv } from "./lib/accounts.js";
+import { appendRecord, storePath } from "./lib/telemetry-store.js";
 
 const { ethers, networkName } = await network.getOrCreate();
 
@@ -45,7 +52,8 @@ if (shipment.sensor.toLowerCase() !== sensor.address.toLowerCase()) {
 
 console.log(`Gateway for shipment #${config.shipmentId} on "${networkName}" — contract ${address}`);
 console.log(`Sensor ${sensor.address}, relayer ${relayer.address}, profile "${config.profile}", every ${config.intervalMs} ms`);
-console.log(`Status: ${STATUS_NAMES[Number(shipment.status)]} (readings are accepted in IN_TRANSIT / COMPROMISED)\n`);
+console.log(`Status: ${STATUS_NAMES[Number(shipment.status)]} (readings are accepted in IN_TRANSIT / COMPROMISED)`);
+console.log(`Off-chain store: ${storePath(networkName, config.shipmentId)}\n`);
 
 let batch = [];
 let lastTimestamp = Number(shipment.lastReadingAt);
@@ -62,15 +70,33 @@ for (let i = 0; running; i++) {
   const timestamp = await nextTimestamp(lastTimestamp);
 
   try {
-    const signature = await signReading(sensor, chainId, address, config.shipmentId, sequence, temperature, timestamp);
+    const { record, telemetryHash } = buildMeasurement({
+      shipmentId: config.shipmentId,
+      sequence,
+      temperature,
+      timestamp,
+      deviceId: config.deviceId,
+    });
+    const signature = await signReading(sensor, {
+      chainId,
+      contractAddress: address,
+      shipmentId: config.shipmentId,
+      sequence,
+      temperature,
+      timestamp,
+      telemetryHash,
+    });
     const receipt = await (
-      await coldChain.submitReading(config.shipmentId, sequence, temperature, timestamp, signature)
+      await coldChain.submitReading(config.shipmentId, sequence, temperature, timestamp, telemetryHash, signature)
     ).wait();
     const violated = receipt.logs.some((log) => coldChain.interface.parseLog(log)?.name === "TemperatureViolation");
+    // Only persist off-chain once the chain accepted the commitment, so the store never holds a
+    // record that no on-chain reading vouches for.
+    await appendRecord(networkName, config.shipmentId, record);
     lastTimestamp = timestamp;
     sequence += 1;
     consecutiveFailures = 0;
-    batch = [...batch, { timestamp, temperature }];
+    batch = [...batch, record];
     console.log(`#${String(sequence - 1).padStart(4)}  ${new Date(timestamp * 1000).toISOString()}  ${formatTemp(temperature).padStart(7)}  ${violated ? "!! VIOLATION" : "ok"}  (block ${receipt.blockNumber})`);
 
     if (config.anchorEvery > 0 && batch.length >= config.anchorEvery) {
@@ -110,6 +136,7 @@ function readConfig() {
     intervalMs: intEnv("INTERVAL_MS", 3000),
     baseTempC: Number(process.env.BASE_TEMP_C ?? 4.5),
     anchorEvery: intEnv("ANCHOR_EVERY", 5),
+    deviceId: process.env.DEVICE_ID ?? DEMO_DEVICE_ID,
     profile,
   };
 }
@@ -138,11 +165,13 @@ function temperatureAt(index) {
   return base + (Math.random() * 2 - 1) * JITTER_C;
 }
 
-async function anchorBatch(readings) {
-  const dataHash = telemetryBatchHash(readings);
+async function anchorBatch(records) {
+  const dataHash = telemetryBatchHash(records);
   try {
-    await (await coldChain.anchorTelemetry(config.shipmentId, dataHash, readings[0].timestamp, readings.at(-1).timestamp)).wait();
-    console.log(`  anchored batch of ${readings.length} readings: ${dataHash}`);
+    await (
+      await coldChain.anchorTelemetry(config.shipmentId, dataHash, records[0].measuredAt, records.at(-1).measuredAt)
+    ).wait();
+    console.log(`  anchored batch of ${records.length} records: ${dataHash}`);
   } catch (err) {
     // Anchoring is authorised for carrier/manufacturer only; a third-party relayer just skips it.
     console.error(`  anchor skipped: ${revertName(err) ?? err.shortMessage ?? err.message}`);

@@ -12,6 +12,7 @@
     "demo": "hardhat run scripts/demo.js",
     "demo:localhost": "hardhat run scripts/demo.js --network localhost",
     "gateway": "hardhat run scripts/sensor-gateway.js --network localhost",
+    "verify": "hardhat run scripts/verify-telemetry.js --network localhost",
     "shipment": "hardhat run scripts/create-shipment.js --network localhost",
     "frontend": "npm --prefix frontend run dev",
     "frontend:install": "npm --prefix frontend install",

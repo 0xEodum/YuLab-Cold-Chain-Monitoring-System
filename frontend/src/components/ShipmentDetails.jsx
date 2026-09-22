@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { STATUS, formatBps, formatDuration, formatEth, formatTemp, formatTime, isActiveStatus } from "../lib/format.js";
 import { ActionsPanel } from "./ActionsPanel.jsx";
 import { AnchorsList, EventLog, ViolationsList } from "./EventLog.jsx";
 import { ReadingsTable } from "./ReadingsTable.jsx";
 import { SensorPanel } from "./SensorPanel.jsx";
+import { TelemetryAudit, tamperRecord } from "./TelemetryAudit.jsx";
 import { TemperatureChart } from "./TemperatureChart.jsx";
 import { Address, Card, Notice, StatusBadge } from "./primitives.jsx";
 
@@ -31,6 +33,15 @@ export function telemetryWarning(shipment, chainNow) {
 
 export function ShipmentDetails({ data, role, provider, signerContract, chainId, onAction, run, isPending }) {
   const { shipment, violations, anchors, settlement, expiredSettlement, readings, events, chainNow } = data;
+  // The off-chain telemetry store, standing in for a database. Deliberately local and editable:
+  // its trustworthiness comes from the on-chain commitments, not from where it is kept.
+  const [store, setStore] = useState([]);
+  const addRecord = (record) =>
+    setStore((current) =>
+      [...current.filter((r) => Number(r.sequence) !== Number(record.sequence)), record].sort(
+        (a, b) => Number(a.sequence) - Number(b.sequence),
+      ),
+    );
   const warning = telemetryWarning(shipment, chainNow);
   const active = isActiveStatus(shipment.status);
   const canAnchor = role.id === "carrier" || role.id === "manufacturer";
@@ -129,10 +140,18 @@ export function ShipmentDetails({ data, role, provider, signerContract, chainId,
           signerContract={signerContract}
           chainId={chainId}
           canAnchor={canAnchor}
+          store={store}
+          onRecord={addRecord}
           run={run}
           isPending={isPending}
         />
       ) : null}
+
+      <TelemetryAudit
+        store={store}
+        readings={readings}
+        onTamper={(sequence, temperature) => setStore((current) => tamperRecord(current, sequence, temperature))}
+      />
 
       <div className="grid-2">
         <Card title="Зафиксированные нарушения">

@@ -3,7 +3,16 @@ import { Interface, Wallet, getBytes, hashMessage, recoverAddress } from "ethers
 import { ROLES, SENSOR_WALLET, roleById, roleForAddress, walletForAccount } from "./roles.js";
 import { formatBps, formatDuration, formatEth, formatTemp, isActiveStatus, isTerminalStatus, statusMeta, toDeci } from "./format.js";
 import { decodeContractError, describeError } from "./errors.js";
-import { nextTimestamp, readingDigest, signReading, temperatureAt } from "./sensor.js";
+import {
+  buildMeasurement,
+  canonicalJson,
+  nextTimestamp,
+  readingDigest,
+  signReading,
+  telemetryRecordHash,
+  temperatureAt,
+  verifyTelemetry,
+} from "./sensor.js";
 import { CONTRACT_ABI, coldChainInterface, resolveSettlement, toEvent, toReading, toShipment } from "./chain.js";
 
 describe("roles", () => {
@@ -100,13 +109,48 @@ describe("sensor", () => {
 
   test("signature recovers to the sensor address over the contract digest", async () => {
     const sensor = Wallet.createRandom();
-    const contract = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-    const digest = readingDigest(31337n, contract, 1, 0, 45, 1_700_000_000);
-    const signature = await signReading(sensor, 31337n, contract, 1, 0, 45, 1_700_000_000);
-    expect(recoverAddress(hashMessage(getBytes(digest)), signature)).toBe(sensor.address);
+    const contractAddress = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+    const { record, telemetryHash } = buildMeasurement({
+      shipmentId: 1,
+      sequence: 0,
+      temperature: 45,
+      timestamp: 1_700_000_000,
+      deviceId: "COLD-SENSOR-001",
+    });
+    const reading = { chainId: 31337n, contractAddress, shipmentId: 1, sequence: 0, temperature: 45, timestamp: 1_700_000_000, telemetryHash };
+
+    const signature = await signReading(sensor, reading);
+    expect(recoverAddress(hashMessage(getBytes(readingDigest(reading))), signature)).toBe(sensor.address);
+
     // altering the temperature after signing breaks recovery — the property the UI demonstrates
-    const altered = readingDigest(31337n, contract, 1, 0, 52, 1_700_000_000);
+    const altered = readingDigest({ ...reading, temperature: 52 });
     expect(recoverAddress(hashMessage(getBytes(altered)), signature)).not.toBe(sensor.address);
+
+    // ...and so does pointing the same reading at a different off-chain record
+    const swapped = readingDigest({ ...reading, telemetryHash: telemetryRecordHash({ ...record, temperature: 52 }) });
+    expect(recoverAddress(hashMessage(getBytes(swapped)), signature)).not.toBe(sensor.address);
+  });
+
+  test("canonicalJson is independent of key order, so equal records hash equally", () => {
+    const a = { shipmentId: "1", sequence: 0, temperature: 45, measuredAt: 10, deviceId: "d" };
+    const b = { deviceId: "d", measuredAt: 10, temperature: 45, sequence: 0, shipmentId: "1" };
+    expect(canonicalJson(a)).toBe(canonicalJson(b));
+    expect(telemetryRecordHash(a)).toBe(telemetryRecordHash(b));
+  });
+
+  test("verifyTelemetry flags edited, missing and uncommitted records", () => {
+    const build = (sequence, temperature) =>
+      buildMeasurement({ shipmentId: 1, sequence, temperature, timestamp: 100 + sequence, deviceId: "d" });
+    const [zero, one, two] = [build(0, 45), build(1, 127), build(2, 50)];
+    const readings = [zero, one].map((m, i) => ({ sequence: i, telemetryHash: m.telemetryHash }));
+
+    expect(verifyTelemetry([zero.record, one.record], readings).ok).toBe(true);
+
+    // record #1 edited off-chain, record #0 deleted, record #2 never committed on-chain
+    const doctored = [{ ...one.record, temperature: 45 }, two.record];
+    const { ok, results } = verifyTelemetry(doctored, readings);
+    expect(ok).toBe(false);
+    expect(results.map((r) => r.status)).toEqual(["missing", "tampered", "unanchored"]);
   });
 });
 
@@ -137,10 +181,11 @@ describe("chain mappers", () => {
 
   test("toReading / toEvent read parsed logs", () => {
     const fragment = coldChainInterface.getEvent("ReadingSubmitted");
-    const encoded = coldChainInterface.encodeEventLog(fragment, [1, 3, 127, 1_700_000_000, ROLES[1].wallet.address, false]);
+    const telemetryHash = `0x${"cd".repeat(32)}`;
+    const encoded = coldChainInterface.encodeEventLog(fragment, [1, 3, 127, 1_700_000_000, telemetryHash, ROLES[1].wallet.address, false]);
     const parsed = coldChainInterface.parseLog({ topics: encoded.topics, data: encoded.data });
     const log = { args: parsed.args, fragment: parsed.fragment, blockNumber: 12, transactionHash: "0xabc", index: 0 };
-    expect(toReading(log)).toMatchObject({ sequence: 3, temperature: 127, inRange: false, blockNumber: 12, txHash: "0xabc" });
+    expect(toReading(log)).toMatchObject({ sequence: 3, temperature: 127, telemetryHash, inRange: false, blockNumber: 12, txHash: "0xabc" });
     const ev = toEvent(log);
     expect(ev.name).toBe("ReadingSubmitted");
     expect(ev.args.temperature).toBe("127");

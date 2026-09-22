@@ -14,6 +14,8 @@ export const ROLE_DEFS = Object.freeze([
 ]);
 
 export const SENSOR_ACCOUNT_INDEX = 9;
+/** The contract's admin and first sensor registrar: whoever deployed it (Hardhat account #0). */
+export const REGISTRAR_ACCOUNT_INDEX = 0;
 
 export function walletForAccount(index) {
   return HDNodeWallet.fromPhrase(HARDHAT_MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`);
@@ -25,6 +27,7 @@ export const ROLES = Object.freeze(
 );
 
 export const SENSOR_WALLET = walletForAccount(SENSOR_ACCOUNT_INDEX);
+export const REGISTRAR_WALLET = walletForAccount(REGISTRAR_ACCOUNT_INDEX);
 
 export function roleById(id) {
   const role = ROLES.find((r) => r.id === id);
@@ -37,5 +40,6 @@ export function roleForAddress(address) {
   if (!address) return undefined;
   const lower = address.toLowerCase();
   if (lower === SENSOR_WALLET.address.toLowerCase()) return { id: "sensor", label: "Датчик" };
+  if (lower === REGISTRAR_WALLET.address.toLowerCase()) return { id: "registrar", label: "Регистратор" };
   return ROLES.find((r) => r.wallet.address.toLowerCase() === lower);
 }

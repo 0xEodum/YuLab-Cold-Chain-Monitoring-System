@@ -16,7 +16,7 @@
 
 ```bash
 npm install
-npm test                 # 52 теста
+npm test                 # 64 теста
 npm run coverage         # покрытие ColdChain.sol — 100 %
 npm run demo             # сквозной сценарий из §9 документации на in-process сети
 ```
@@ -38,6 +38,13 @@ SHIPMENT_ID=1 PROFILE=spike npm run gateway   # CLI-эмулятор датчи�
 npm run demo:localhost   # сквозной сценарий против ноды
 ```
 
+Аудит off-chain хранилища (шлюз пишет его в `telemetry/<сеть>-shipment-<id>.json`):
+
+```bash
+SHIPMENT_ID=1 npm run verify                  # сверить хранилище с блокчейном
+SHIPMENT_ID=1 TAMPER=4:4.5 npm run verify     # сначала подменить запись #4 — и увидеть, как это вскроется
+```
+
 После перезапуска ноды деплой нужно повторить (`npm run deploy`) — интерфейс сам подскажет это баннером.
 
 Сборка контейнерным компилятором (ABI + bytecode в `build-solc/`, те же настройки, что у Hardhat):
@@ -48,7 +55,13 @@ npm run compile:docker
 
 ## Модель контракта `ColdChain`
 
+Датчик сначала попадает в реестр (`registerSensor`), и только зарегистрированному активному устройству
+можно назначить поставку:
+
 ```
+registerSensor(registrar) ──▶ SensorRecord{deviceIdHash, active}
+                                     │ (требуется в createShipment)
+                                     ▼
 CREATED ──startTransit(carrier)──▶ IN_TRANSIT ──violation──▶ COMPROMISED
    │                                    │                         │
    │                                    ├────confirmDelivery(receiver)────▶ DELIVERED
@@ -60,22 +73,29 @@ CREATED ──startTransit(carrier)──▶ IN_TRANSIT ──violation──▶
 
 | Функция | Кто | Что делает |
 |---|---|---|
-| `createShipment(product, carrier, receiver, sensor, minTemp, maxTemp, penaltyBps)` `payable` | Manufacturer | Создаёт поставку, депонирует `msg.value` (escrow) |
+| `registerSensor(sensor, deviceIdHash)` | Sensor registrar | Ставит ключ датчика в реестр; без этого его нельзя назначить поставке |
+| `setSensorActive(sensor, active)` | Sensor registrar | Вывод из эксплуатации / возврат; на уже созданные поставки не влияет |
+| `setRegistrar(account, allowed)` | Admin (деплоер) | Выдаёт и отзывает право вести реестр |
+| `createShipment(product, carrier, receiver, sensor, minTemp, maxTemp, penaltyBps)` `payable` | Manufacturer | Создаёт поставку для зарегистрированного датчика, депонирует `msg.value` (escrow) |
 | `cancelShipment(id)` | Manufacturer | Отмена до принятия перевозчиком, escrow возвращается |
 | `startTransit(id)` | Carrier | Принятие условий, начало мониторинга |
-| `submitReading(id, sequence, temperature, timestamp, signature)` | Любой relay (шлюз) | Показание, подписанное ключом датчика; вне диапазона → `TemperatureViolation` + `COMPROMISED` |
+| `submitReading(id, sequence, temperature, timestamp, telemetryHash, signature)` | Любой relay (шлюз) | Показание и хэш off-chain записи, подписанные ключом датчика вместе; вне диапазона → `TemperatureViolation` + `COMPROMISED` |
 | `anchorTelemetry(id, hash, from, to)` | Carrier / Manufacturer | Якорит хэш off-chain батча телеметрии |
 | `confirmDelivery(id)` | Receiver | Завершение; расчёт выплат по правилу, зафиксированному при создании |
 | `settleExpired(id)` | Carrier / Manufacturer | Расчёт, если получатель не подтвердил доставку за `SETTLEMENT_TIMEOUT` (30 дней) — escrow не может зависнуть навсегда. Штраф удерживается **всегда**: подтверждения доставки нет |
 | `withdraw()` | Carrier / Manufacturer | Забрать начисленное (pull-payment) |
-| `getShipment / getViolations / getAnchors / previewSettlement / previewExpiredSettlement / hasTemperatureViolation / readingDigest` | view | Данные для фронтенда |
+| `getShipment / getViolations / getAnchors / getSensor / isSensorActive / previewSettlement / previewExpiredSettlement / hasTemperatureViolation / readingDigest` | view | Данные для фронтенда |
 
 Ключевые решения:
 
 - **Температура** — `int32` в десятых долях °C (`2.0°C == 20`), чтобы не использовать дробные числа в EVM.
+- **Реестр датчиков.** Поставку можно назначить только зарегистрированному и активному устройству
+  (`SensorNotRegistered` / `SensorInactive`). В цепи хранится `deviceIdHash` — обязательство к off-chain паспорту
+  устройства (серийный номер, модель, сертификат поверки). Вывод датчика из эксплуатации действует только вперёд:
+  уже идущие поставки продолжают работать, чтобы регистратор не мог задним числом сломать чужую поставку.
 - **Подпись датчика.** Показание подписывается EIP-191 (`personal_sign`) над
-  `keccak256(abi.encode(chainId, contract, shipmentId, sequence, temperature, timestamp))`. Контракт восстанавливает
-  подписанта и сравнивает с `sensor`, зарегистрированным при создании поставки. Отправлять транзакцию может кто угодно —
+  `keccak256(abi.encode(chainId, contract, shipmentId, sequence, temperature, timestamp, telemetryHash))`. Контракт
+  восстанавливает подписанта и сравнивает с `sensor` поставки. Отправлять транзакцию может кто угодно —
   аутентифицирует данные подпись, а не `msg.sender`. Перевозчик не может «исправить» 12.7°C на 5.2°C: подпись перестанет сходиться.
 - **Без пропусков.** Датчик нумерует показания; контракт требует `sequence == readingCount` (`SequenceMismatch`).
   Перевозчик не может «потерять» показание с нарушением и передать следующее нормальное — цепочка показаний либо полная,
@@ -90,9 +110,16 @@ CREATED ──startTransit(carrier)──▶ IN_TRANSIT ──violation──▶
   Так скрывать показания становится не выгоднее, чем честно передать нарушение.
 - **On-chain / off-chain.** Каждое показание попадает в событие `ReadingSubmitted` (дёшево, фронтенд читает историю по логам),
   в storage пишутся только нарушения и якоря хэшей батчей.
+- **Целостность off-chain данных.** Полная запись измерения (идентификатор устройства, время, температура и прочие
+  данные датчика) хранится вне цепи, а её хэш (`telemetryHash`) входит в подписываемый датчиком дайджест
+  и публикуется в `ReadingSubmitted`. Хэш считается от канонического JSON (ключи отсортированы), чтобы не зависеть
+  от порядка полей. Поэтому любую правку хранилища можно доказать: пересчёт хэша не сойдётся с обязательством
+  в цепи, а обязательство подписано самим датчиком — значит изменилось именно хранилище
+  (см. `scripts/verify-telemetry.js` и карточку «Off-chain хранилище телеметрии» в UI).
 
-События: `ShipmentCreated`, `ShipmentStarted`, `ReadingSubmitted`, `TemperatureViolation`, `TelemetryAnchored`,
-`ShipmentDelivered`, `ShipmentExpired`, `ShipmentCancelled`, `Withdrawal`.
+События: `SensorRegistered`, `SensorActiveSet`, `RegistrarSet`, `ShipmentCreated`, `ShipmentStarted`,
+`ReadingSubmitted`, `TemperatureViolation`, `TelemetryAnchored`, `ShipmentDelivered`, `ShipmentExpired`,
+`ShipmentCancelled`, `Withdrawal`.
 
 ## Структура
 
@@ -103,14 +130,17 @@ test/ColdChain.test.js               mocha-тесты (fixtures, custom errors, 
 scripts/deploy.js                    деплой + запись deployments/<network>.json
 scripts/demo.js                      сквозной сценарий (create → violation → settlement)
 scripts/create-shipment.js           CLI: создать поставку на ноде
-scripts/sensor-gateway.js            эмулятор IoT-датчика + шлюза (подпись, relay, якорение)
+scripts/sensor-gateway.js            эмулятор IoT-датчика + шлюза (подпись, relay, якорение, запись off-chain)
+scripts/verify-telemetry.js          аудит off-chain хранилища против цепи (+ режим TAMPER)
 scripts/compile-docker.js            сборка через ghcr.io/argotorg/solc:stable
-scripts/lib/sensor.js                readingDigest / signReading / hash батча (зеркало контракта)
-scripts/lib/accounts.js              ключ демо-датчика (hardhat account #9), SENSOR_PRIVATE_KEY
+scripts/lib/sensor.js                каноническая запись, хэши, readingDigest / signReading, verifyTelemetry
+scripts/lib/telemetry-store.js       файловое off-chain хранилище telemetry/*.json (вместо БД)
+scripts/lib/accounts.js              ключ демо-датчика (hardhat account #9), его deviceId, SENSOR_PRIVATE_KEY
 scripts/lib/deployment.js            чтение/запись deployments/*.json
 frontend/src/lib/                    chain (provider, ABI, мапперы), roles (ключи демо-ролей), sensor, errors, format
-frontend/src/hooks/                  useChain (опрос блоков), useShipments (список/детали/балансы), useTransaction
-frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentDetails, SensorPanel, TemperatureChart, EventLog…
+frontend/src/hooks/                  useChain (опрос блоков), useShipments (список/детали/балансы/реестр), useTransaction
+frontend/src/components/             RoleSwitcher, CreateShipmentForm, SensorRegistry, ShipmentDetails, SensorPanel,
+                                     TelemetryAudit, TemperatureChart, EventLog…
 ```
 
 ## Фронтенд (`frontend/`)
@@ -121,6 +151,8 @@ frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentD
 
 Что показывает интерфейс:
 
+- **Реестр датчиков**: статус демо-устройства, его `deviceIdHash`, кнопки регистрации и вывода из эксплуатации
+  (подписывает регистратор — аккаунт #0). После вывода создать поставку с этим датчиком уже нельзя.
 - **Список поставок и форма создания** (для производителя): диапазон температур, escrow в ETH, штраф в %.
   Валидация повторяет проверки контракта, чтобы ошибка была видна до отправки транзакции.
 - **Карточка поставки**: условия, статус, `previewSettlement` — сколько получит перевозчик и что вернётся
@@ -141,15 +173,17 @@ frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentD
 
 Технически: `frontend/src/lib/chain.js` берёт адрес и ABI из `deployments/localhost.json`, подпись показаний
 переиспользует `scripts/lib/sensor.js` (тот же код, что у CLI-шлюза). Состояние перечитывается при появлении нового
-блока (опрос `eth_blockNumber` раз в секунду). Тесты: `npm run frontend:test` — 44 теста, включая сквозной сценарий
+блока (опрос `eth_blockNumber` раз в секунду). Тесты: `npm run frontend:test` — 47 тестов, включая сквозной сценарий
 на in-memory заглушке контракта; покрытие ~93 %.
 
 ## Для фронтенда (справочно)
 
 - Адрес и ABI: `deployments/localhost.json` (адрес детерминирован: `0x5FbDB2315678afecb367f032d93F642f64180aa3` при свежей ноде).
-- Роли — стандартные аккаунты Hardhat: `#1` manufacturer, `#2` carrier, `#3` receiver, `#9` — ключ демо-датчика
+- Роли — стандартные аккаунты Hardhat: `#0` админ/регистратор, `#1` manufacturer, `#2` carrier, `#3` receiver, `#9` — ключ демо-датчика
   (см. `scripts/lib/accounts.js`; это публичные тестовые ключи, только для локальной сети).
 - История поставки: `getShipment`, `getViolations`, `getAnchors` + фильтр событий `ReadingSubmitted(shipmentId)`.
+- Реестр датчиков: `getSensor(address)` / `isSensorActive(address)`; админ и первый регистратор — деплоер (аккаунт `#0`),
+  `npm run deploy` сразу регистрирует демо-датчик.
 - Расчёт выплат: `previewSettlement(id)` — как рассчитается `confirmDelivery`; `previewExpiredSettlement(id)` — как рассчитается
   `settleExpired`. Оба опираются на `violationCount`, а не на текущий статус, поэтому остаются верными и после расчёта.
   Фактический итог завершённой поставки всегда есть в событии `ShipmentDelivered` / `ShipmentExpired`.
@@ -165,4 +199,10 @@ frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentD
   поэтому молчание перевозчику выгоднее честного нарушения не делает. Но при `confirmDelivery` получатель по-прежнему
   подтверждает доставку «на глаз» — полноценный арбитраж вне MVP.
 - `anchorTelemetry` — только аудиторский след (хэш off-chain батча), в расчёте выплат не участвует.
-- Компрометация физического датчика, несколько датчиков на поставку, оплата ERC-20, деплой в публичную сеть.
+  Целостность отдельных записей обеспечивает `telemetryHash` в каждом показании, якорь же даёт одно
+  обязательство на целый батч сразу.
+- **Хранилище телеметрии — файл, а не БД.** Для учебного проекта этого достаточно: схема доказательства
+  не зависит от того, где лежат данные — важно лишь, что хранилищу не доверяют. Замена на PostgreSQL или
+  любую другую БД не потребует изменений ни в контракте, ни в логике аудита.
+- Компрометация физического датчика (реестр доказывает происхождение ключа, но не то, что устройство измерило
+  правду), несколько датчиков на поставку, оплата ERC-20, деплой в публичную сеть.

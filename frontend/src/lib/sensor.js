@@ -2,7 +2,16 @@
  * Browser-side sensor helpers. The digest/signature code is shared with the Hardhat scripts
  * (scripts/lib/sensor.js) so the contract, the CLI gateway and the UI can never drift apart.
  */
-export { readingDigest, signReading, telemetryBatchHash } from "@backend/scripts/lib/sensor.js";
+export { DEMO_DEVICE_ID } from "@backend/scripts/lib/accounts.js";
+export {
+  buildMeasurement,
+  canonicalJson,
+  readingDigest,
+  signReading,
+  telemetryBatchHash,
+  telemetryRecordHash,
+  verifyTelemetry,
+} from "@backend/scripts/lib/sensor.js";
 
 export const SPIKE_TEMP_C = 12.7;
 export const SPIKE_START_INDEX = 4;

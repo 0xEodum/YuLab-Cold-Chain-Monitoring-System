@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { CONTRACT_ADDRESS } from "../lib/chain.js";
 import { SENSOR_WALLET, walletForAccount } from "../lib/roles.js";
 import { formatTemp, toDeci } from "../lib/format.js";
-import { nextTimestamp, signReading, telemetryBatchHash, temperatureAt } from "../lib/sensor.js";
+import {
+  buildMeasurement,
+  DEMO_DEVICE_ID,
+  nextTimestamp,
+  signReading,
+  telemetryBatchHash,
+  telemetryRecordHash,
+  temperatureAt,
+} from "../lib/sensor.js";
 import { Card, Notice } from "./primitives.jsx";
 
 const INTERVAL_OPTIONS = [2000, 3000, 5000];
@@ -26,7 +34,12 @@ const TAMPER_MODES = [
   {
     id: "impostor",
     label: "Подписать чужим ключом",
-    hint: "Показание подписано не зарегистрированным датчиком (InvalidSignature).",
+    hint: "Показание подписано ключом, который не закреплён за этой поставкой (InvalidSignature).",
+  },
+  {
+    id: "record",
+    label: "Подменить off-chain запись",
+    hint: "Температура и подпись настоящие, но шлюз ссылается на другую off-chain запись. Подпись покрывает и её хэш, поэтому контракт отвергнет (InvalidSignature).",
   },
 ];
 
@@ -35,15 +48,17 @@ const TAMPER_MODES = [
  * through the active role's wallet (anyone may relay — the signature is what counts).
  * The "tamper" modes show what the contract rejects and why.
  */
-export function SensorPanel({ shipment, provider, signerContract, chainId, canAnchor, run, isPending }) {
+export function SensorPanel({ shipment, provider, signerContract, chainId, canAnchor, store, onRecord, run, isPending }) {
   const [tempC, setTempC] = useState(4.5);
   const [alteredC, setAlteredC] = useState(5.0);
   const [tamper, setTamper] = useState("none");
   const [profile, setProfile] = useState("spike");
   const [auto, setAuto] = useState(false);
   const [intervalMs, setIntervalMs] = useState(3000);
-  const [batch, setBatch] = useState([]);
+  const [anchoredCount, setAnchoredCount] = useState(0);
   const [lastSigned, setLastSigned] = useState(null);
+  // Records collected since the last anchor.
+  const batch = store.slice(anchoredCount);
   const autoIndex = useRef(0);
   const busy = useRef(false);
 
@@ -62,14 +77,34 @@ export function SensorPanel({ shipment, provider, signerContract, chainId, canAn
       });
       const signedTemp = toDeci(celsius);
       const key = mode === "impostor" ? IMPOSTOR_WALLET : SENSOR_WALLET;
-      const signature = await signReading(key, chainId, CONTRACT_ADDRESS, shipment.id, sequence, signedTemp, timestamp);
+      // The sensor signs the reading AND the hash of the full off-chain record together.
+      const { record, telemetryHash } = buildMeasurement({
+        shipmentId: shipment.id,
+        sequence,
+        temperature: signedTemp,
+        timestamp,
+        deviceId: DEMO_DEVICE_ID,
+      });
+      const signature = await signReading(key, {
+        chainId,
+        contractAddress: CONTRACT_ADDRESS,
+        shipmentId: shipment.id,
+        sequence,
+        temperature: signedTemp,
+        timestamp,
+        telemetryHash,
+      });
       const sentTemp = mode === "alter" ? toDeci(alteredC) : signedTemp;
-      setLastSigned({ sequence, timestamp, signedTemp, sentTemp, signer: key.address, signature });
+      const sentHash = mode === "record" ? telemetryRecordHash({ ...record, temperature: toDeci(alteredC) }) : telemetryHash;
+      setLastSigned({ sequence, timestamp, signedTemp, sentTemp, telemetryHash, sentHash, signer: key.address, signature });
 
       const label =
         mode === "none" ? `Показание #${sequence} (${formatTemp(sentTemp)})` : `Показание #${sequence} [${modeLabel(mode)}]`;
-      const receipt = await run(label, () => signerContract.submitReading(shipment.id, sequence, sentTemp, timestamp, signature));
-      if (receipt) setBatch((b) => [...b, { timestamp, temperature: sentTemp }]);
+      const receipt = await run(label, () =>
+        signerContract.submitReading(shipment.id, sequence, sentTemp, timestamp, sentHash, signature),
+      );
+      // The off-chain store only gets the record the chain actually accepted.
+      if (receipt) onRecord(record);
     } finally {
       busy.current = false;
     }
@@ -77,10 +112,10 @@ export function SensorPanel({ shipment, provider, signerContract, chainId, canAn
 
   async function anchor() {
     const dataHash = telemetryBatchHash(batch);
-    const receipt = await run(`Якорь батча из ${batch.length} показаний`, () =>
-      signerContract.anchorTelemetry(shipment.id, dataHash, batch[0].timestamp, batch.at(-1).timestamp),
+    const receipt = await run(`Якорь батча из ${batch.length} записей`, () =>
+      signerContract.anchorTelemetry(shipment.id, dataHash, batch[0].measuredAt, batch.at(-1).measuredAt),
     );
-    if (receipt) setBatch([]);
+    if (receipt) setAnchoredCount(store.length);
   }
 
   useEffect(() => {
@@ -128,7 +163,7 @@ export function SensorPanel({ shipment, provider, signerContract, chainId, canAn
                 {m.label}
               </label>
             ))}
-            {tamper === "alter" ? (
+            {tamper === "alter" || tamper === "record" ? (
               <label className="inline">
                 Отправить вместо подписанного:
                 <input type="number" step="0.1" value={alteredC} onChange={(e) => setAlteredC(Number(e.target.value))} />
@@ -178,7 +213,7 @@ export function SensorPanel({ shipment, provider, signerContract, chainId, canAn
           <fieldset className="anchor">
             <legend>Якорение off-chain батча</legend>
             <p className="muted small">
-              Полная телеметрия хранится off-chain; в цепочку периодически пишется хэш батча. В буфере: {batch.length} показаний.
+              Помимо показаний в цепочку периодически пишется общий хэш батча off-chain записей. Не заякорено: {batch.length}.
             </p>
             <button type="button" className="btn btn-secondary" disabled={isPending || batch.length === 0 || !canAnchor} onClick={anchor}>
               Заякорить хэш батча
@@ -189,15 +224,24 @@ export function SensorPanel({ shipment, provider, signerContract, chainId, canAn
       </div>
 
       {lastSigned ? (
-        <Notice tone={lastSigned.signedTemp === lastSigned.sentTemp ? "info" : "warning"}>
+        <Notice tone={lastSigned.sentTemp === lastSigned.signedTemp && lastSigned.sentHash === lastSigned.telemetryHash ? "info" : "warning"}>
           <div className="signed">
             <div>
               Подписано: #{lastSigned.sequence}, {formatTemp(lastSigned.signedTemp)}, ts {lastSigned.timestamp}, ключ{" "}
               <code>{lastSigned.signer.slice(0, 10)}…</code>
             </div>
+            <div className="muted small">
+              off-chain запись <code>{lastSigned.telemetryHash.slice(0, 18)}…</code>
+            </div>
             {lastSigned.signedTemp !== lastSigned.sentTemp ? (
               <div>
                 Отправлено в контракт: <strong>{formatTemp(lastSigned.sentTemp)}</strong> — подпись к этим данным не подходит.
+              </div>
+            ) : null}
+            {lastSigned.sentHash !== lastSigned.telemetryHash ? (
+              <div>
+                Ссылка на off-chain запись подменена на <code>{lastSigned.sentHash.slice(0, 18)}…</code> — подпись
+                покрывает и хэш записи, поэтому она больше не сходится.
               </div>
             ) : null}
             <div className="muted small">

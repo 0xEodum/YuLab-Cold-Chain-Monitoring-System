@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { keccak256, toUtf8Bytes } from "ethers";
 import { useChain } from "./hooks/useChain.js";
-import { useBalances, useShipment, useShipmentList } from "./hooks/useShipments.js";
+import { useBalances, useSensorRecord, useShipment, useShipmentList } from "./hooks/useShipments.js";
 import { useTransaction } from "./hooks/useTransaction.js";
+import { DEMO_DEVICE_ID } from "./lib/sensor.js";
 import { writeContract } from "./lib/chain.js";
-import { ROLES, roleById } from "./lib/roles.js";
+import { REGISTRAR_WALLET, ROLES, SENSOR_WALLET, roleById } from "./lib/roles.js";
 import { ConnectionBanner } from "./components/ConnectionBanner.jsx";
 import { CreateShipmentForm } from "./components/CreateShipmentForm.jsx";
 import { RoleSwitcher } from "./components/RoleSwitcher.jsx";
 import { ShipmentDetails } from "./components/ShipmentDetails.jsx";
+import { SensorRegistry } from "./components/SensorRegistry.jsx";
 import { ShipmentList } from "./components/ShipmentList.jsx";
 import { TxStatus } from "./components/TxStatus.jsx";
 import { Card } from "./components/primitives.jsx";
@@ -27,10 +30,14 @@ export default function App() {
   const role = roleById(roleId);
   const signerContract = useMemo(() => writeContract(role.wallet.connect(provider)), [role, provider]);
 
+  // The registry is administered by the deployer, not by any of the three business roles.
+  const registrarContract = useMemo(() => writeContract(REGISTRAR_WALLET.connect(provider)), [provider]);
+
   const [selectedId, setSelectedId] = useState(null);
   const { shipments, error: listError } = useShipmentList(contract, blockNumber, ready);
   const { data, error: detailsError } = useShipment(contract, provider, selectedId, blockNumber, ready);
   const balances = useBalances(contract, provider, ROLES, blockNumber, ready);
+  const { record: sensorRecord } = useSensorRecord(contract, SENSOR_WALLET.address, blockNumber, ready);
   const { state: txState, run, reset, isPending } = useTransaction();
 
   // Select the newest shipment by default once the list arrives.
@@ -57,6 +64,15 @@ export default function App() {
     }
   };
 
+  const handleRegisterSensor = () =>
+    run("Регистрация датчика", () =>
+      registrarContract.registerSensor(SENSOR_WALLET.address, keccak256(toUtf8Bytes(DEMO_DEVICE_ID))),
+    );
+  const handleSetSensorActive = (active) =>
+    run(active ? "Возврат датчика в эксплуатацию" : "Вывод датчика из эксплуатации", () =>
+      registrarContract.setSensorActive(SENSOR_WALLET.address, active),
+    );
+
   const handleAction = (actionId) => run(ACTION_LABELS[actionId] ?? actionId, () => signerContract[actionId](selectedId));
   const handleWithdraw = () => run("Вывод средств", () => signerContract.withdraw());
 
@@ -78,6 +94,14 @@ export default function App() {
             {listError ? <p className="text-danger small">{listError.shortMessage ?? listError.message}</p> : null}
             <ShipmentList shipments={shipments} selectedId={selectedId} onSelect={setSelectedId} />
           </Card>
+          {ready ? (
+            <SensorRegistry
+              record={sensorRecord}
+              onRegister={handleRegisterSensor}
+              onSetActive={handleSetSensorActive}
+              isPending={isPending}
+            />
+          ) : null}
           {roleId === "manufacturer" && ready ? <CreateShipmentForm onSubmit={handleCreate} isPending={isPending} /> : null}
         </aside>
 

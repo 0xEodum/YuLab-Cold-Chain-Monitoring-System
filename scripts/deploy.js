@@ -1,5 +1,6 @@
 import { network } from "hardhat";
 import { saveDeployment } from "./lib/deployment.js";
+import { DEMO_SENSOR_WALLET, DEMO_DEVICE_ID, ensureDemoSensorRegistered } from "./lib/accounts.js";
 
 const { ethers, networkName } = await network.getOrCreate();
 
@@ -21,3 +22,13 @@ const record = await saveDeployment(networkName, {
 
 console.log(`ColdChain deployed at ${record.address} (block ${receipt.blockNumber})`);
 console.log(`Deployment record written to deployments/${networkName}.json`);
+console.log(`Admin / first sensor registrar: ${deployer.address}`);
+
+// A shipment can only be assigned to a registered sensor, so put the demo device on the
+// registry right away — otherwise nothing in the demo can create a shipment.
+if (networkName === "hardhat" || networkName === "localhost") {
+  const outcome = await ensureDemoSensorRegistered(coldChain);
+  console.log(`Demo sensor ${DEMO_SENSOR_WALLET.address} ${outcome} ("${DEMO_DEVICE_ID}")`);
+} else {
+  console.log(`Register a sensor before creating shipments: coldChain.registerSensor(<sensor>, <deviceIdHash>)`);
+}

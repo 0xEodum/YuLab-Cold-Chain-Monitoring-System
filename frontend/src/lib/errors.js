@@ -15,6 +15,11 @@ const ERROR_MESSAGES = {
   ReadingFromFuture: () => "Таймстамп показания слишком далеко в будущем.",
   ShipmentNotFound: (a) => `Поставка #${a.shipmentId} не найдена.`,
   ZeroAddress: (a) => `Адрес поля «${a.field}» не задан.`,
+  SensorNotRegistered: (a) => `Датчик ${short(a.sensor)} не зарегистрирован в реестре.`,
+  SensorInactive: (a) => `Датчик ${short(a.sensor)} выведен из эксплуатации — новые поставки ему нельзя назначить.`,
+  SensorAlreadyRegistered: (a) => `Датчик ${short(a.sensor)} уже есть в реестре.`,
+  EmptyDeviceIdHash: () => "Нужен ненулевой хэш идентификатора устройства.",
+  EmptyTelemetryHash: () => "Показание должно ссылаться на off-chain запись (telemetryHash не задан).",
   InvalidTemperatureRange: () => "Минимальная температура должна быть ниже максимальной.",
   InvalidPenalty: () => "Штраф не может превышать 100 %.",
   ZeroPayment: () => "Сумма оплаты должна быть больше нуля.",
@@ -24,6 +29,10 @@ const ERROR_MESSAGES = {
   NothingToWithdraw: () => "Нет средств к выводу.",
   TransferFailed: () => "Перевод средств не удался.",
 };
+
+function short(address) {
+  return `${String(address).slice(0, 10)}…`;
+}
 
 function statusName(value) {
   return STATUS_NAMES[Number(value)] ?? String(value);

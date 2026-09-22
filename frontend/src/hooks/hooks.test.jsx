@@ -6,6 +6,9 @@ import { useChain } from "./useChain.js";
 import { CONTRACT_ADDRESS, coldChainInterface } from "../lib/chain.js";
 import { ROLES } from "../lib/roles.js";
 
+const ZERO = "0x0000000000000000000000000000000000000000";
+const TELEMETRY_HASH = `0x${"cd".repeat(32)}`;
+
 vi.mock("../lib/chain.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, createProvider: () => fakeProvider, readContract: () => fakeContract };
@@ -42,13 +45,14 @@ const fakeContract = {
   getViolations: vi.fn(async () => [{ temperature: 127n, timestamp: 3n, recordedAt: 4n }]),
   getAnchors: vi.fn(async () => [{ dataHash: "0x" + "ab".repeat(32), fromTimestamp: 1n, toTimestamp: 3n, anchoredBy: ROLES[1].wallet.address, anchoredAt: 5n }]),
   previewSettlement: vi.fn(async () => [800n, 200n]),
+  getSensor: vi.fn(async () => ({ deviceIdHash: `0x${"11".repeat(32)}`, registeredBy: ZERO, registeredAt: 150n, active: true })),
   previewExpiredSettlement: vi.fn(async () => [800n, 200n]),
   pendingWithdrawals: vi.fn(async () => 5n),
 };
 
 const fakeProvider = {
   getLogs: vi.fn(async () => [
-    encodedLog("ReadingSubmitted", [1, 0, 127, 3, ROLES[1].wallet.address, false], 7),
+    encodedLog("ReadingSubmitted", [1, 0, 127, 3, TELEMETRY_HASH, ROLES[1].wallet.address, false], 7),
     encodedLog("TemperatureViolation", [1, 127, 3, 0], 7),
   ]),
   getBlock: vi.fn(async () => ({ timestamp: 1000 })),

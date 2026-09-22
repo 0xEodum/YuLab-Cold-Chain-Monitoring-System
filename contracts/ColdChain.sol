@@ -11,7 +11,9 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 /// @dev Temperatures are expressed in tenths of a degree Celsius (e.g. 2.0°C == 20).
 ///      Readings are submitted by anyone (a relay / gateway) but MUST carry a valid
 ///      EIP-191 signature from the sensor registered for the shipment — the signature,
-///      not the transaction sender, is what authenticates the data.
+///      not the transaction sender, is what authenticates the data. Each signature also covers
+///      the hash of the corresponding off-chain telemetry record, which is what makes the
+///      hybrid on-chain/off-chain split verifiable rather than merely declared.
 contract ColdChain {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
@@ -54,6 +56,16 @@ contract ColdChain {
         uint64 recordedAt; // block timestamp when it was recorded on-chain
     }
 
+    /// @notice A sensor device authorised to sign readings (FR-01).
+    /// @dev `deviceIdHash` commits to the device's off-chain identity (serial number, model,
+    ///      calibration certificate, ...) without putting any of it on-chain.
+    struct SensorRecord {
+        bytes32 deviceIdHash;
+        address registeredBy;
+        uint64 registeredAt; // 0 == never registered
+        bool active;
+    }
+
     struct TelemetryAnchor {
         bytes32 dataHash; // hash of an off-chain telemetry batch
         uint64 fromTimestamp;
@@ -73,6 +85,12 @@ contract ColdChain {
     ///         so a missing receiver can never lock the escrow forever.
     uint64 public constant SETTLEMENT_TIMEOUT = 30 days;
 
+    /// @notice May grant and revoke sensor registrars. Set once, at deployment.
+    address public immutable admin;
+    /// @notice Accounts allowed to register sensors and toggle their `active` flag.
+    mapping(address account => bool) public isSensorRegistrar;
+    mapping(address sensor => SensorRecord) private _sensors;
+
     uint256 public shipmentCount;
     mapping(uint256 shipmentId => Shipment) private _shipments;
     mapping(uint256 shipmentId => Violation[]) private _violations;
@@ -84,6 +102,9 @@ contract ColdChain {
     // Events
     // ---------------------------------------------------------------------
 
+    event SensorRegistered(address indexed sensor, bytes32 deviceIdHash, address indexed registeredBy);
+    event SensorActiveSet(address indexed sensor, bool active, address indexed changedBy);
+    event RegistrarSet(address indexed account, bool allowed);
     event ShipmentCreated(
         uint256 indexed shipmentId,
         address indexed manufacturer,
@@ -102,6 +123,7 @@ contract ColdChain {
         uint32 sequence,
         int32 temperature,
         uint64 timestamp,
+        bytes32 telemetryHash,
         address indexed reporter,
         bool inRange
     );
@@ -132,10 +154,15 @@ contract ColdChain {
     error InvalidStatus(uint256 shipmentId, Status current);
     error Unauthorized(address caller);
     error ZeroAddress(string field);
+    error SensorNotRegistered(address sensor);
+    error SensorInactive(address sensor);
+    error SensorAlreadyRegistered(address sensor);
+    error EmptyDeviceIdHash();
     error InvalidTemperatureRange(int32 minTemp, int32 maxTemp);
     error InvalidPenalty(uint16 penaltyBps);
     error ZeroPayment();
     error InvalidSignature();
+    error EmptyTelemetryHash();
     error SequenceMismatch(uint32 expected, uint32 actual);
     error StaleReading(uint64 timestamp, uint64 lastReadingAt);
     error ReadingBeforeTransit(uint64 timestamp, uint64 startedAt);
@@ -152,6 +179,68 @@ contract ColdChain {
     modifier exists(uint256 shipmentId) {
         if (shipmentId == 0 || shipmentId > shipmentCount) revert ShipmentNotFound(shipmentId);
         _;
+    }
+
+    modifier onlyAdmin() {
+        if (msg.sender != admin) revert Unauthorized(msg.sender);
+        _;
+    }
+
+    modifier onlyRegistrar() {
+        if (!isSensorRegistrar[msg.sender]) revert Unauthorized(msg.sender);
+        _;
+    }
+
+    // ---------------------------------------------------------------------
+    // Deployment
+    // ---------------------------------------------------------------------
+
+    /// @dev The deployer becomes the admin and the first sensor registrar.
+    constructor() {
+        admin = msg.sender;
+        isSensorRegistrar[msg.sender] = true;
+        emit RegistrarSet(msg.sender, true);
+    }
+
+    // ---------------------------------------------------------------------
+    // Sensor registry
+    // ---------------------------------------------------------------------
+
+    /// @notice Grant or revoke the right to register sensors.
+    function setRegistrar(address account, bool allowed) external onlyAdmin {
+        if (account == address(0)) revert ZeroAddress("account");
+        isSensorRegistrar[account] = allowed;
+        emit RegistrarSet(account, allowed);
+    }
+
+    /// @notice Register an IoT sensor's signing key so shipments may be assigned to it.
+    /// @param sensor Address derived from the device's public key.
+    /// @param deviceIdHash Commitment to the device's off-chain identity; must not be zero.
+    function registerSensor(address sensor, bytes32 deviceIdHash) external onlyRegistrar {
+        if (sensor == address(0)) revert ZeroAddress("sensor");
+        if (deviceIdHash == bytes32(0)) revert EmptyDeviceIdHash();
+        if (_sensors[sensor].registeredAt != 0) revert SensorAlreadyRegistered(sensor);
+
+        _sensors[sensor] = SensorRecord({
+            deviceIdHash: deviceIdHash,
+            registeredBy: msg.sender,
+            registeredAt: uint64(block.timestamp),
+            active: true
+        });
+
+        emit SensorRegistered(sensor, deviceIdHash, msg.sender);
+    }
+
+    /// @notice Retire a compromised or decommissioned sensor, or bring one back into service.
+    /// @dev Deliberately does NOT affect shipments already created with this sensor: their
+    ///      readings keep verifying against the key fixed at creation time, so retiring a device
+    ///      can never rewrite history or strand a shipment mid-transit. The flag only gates
+    ///      `createShipment`.
+    function setSensorActive(address sensor, bool active) external onlyRegistrar {
+        if (_sensors[sensor].registeredAt == 0) revert SensorNotRegistered(sensor);
+
+        _sensors[sensor].active = active;
+        emit SensorActiveSet(sensor, active, msg.sender);
     }
 
     // ---------------------------------------------------------------------
@@ -178,6 +267,7 @@ contract ColdChain {
         if (carrier == address(0)) revert ZeroAddress("carrier");
         if (receiver == address(0)) revert ZeroAddress("receiver");
         if (sensor == address(0)) revert ZeroAddress("sensor");
+        _requireActiveSensor(sensor);
         if (minTemp >= maxTemp) revert InvalidTemperatureRange(minTemp, maxTemp);
         if (penaltyBps > MAX_BPS) revert InvalidPenalty(penaltyBps);
         if (msg.value == 0) revert ZeroPayment();
@@ -235,27 +325,35 @@ contract ColdChain {
 
     /// @notice Submit a sensor-signed temperature reading.
     /// @dev Anyone may relay a reading; authenticity comes from the sensor signature over
-    ///      `readingDigest(shipmentId, sequence, temperature, timestamp)` (EIP-191 personal_sign).
-    ///      Readings must arrive gap-free (`sequence == readingCount`) with strictly increasing
-    ///      timestamps: a relay cannot skip an inconvenient reading and continue with later ones,
-    ///      and no reading can be replayed.
+    ///      `readingDigest(shipmentId, sequence, temperature, timestamp, telemetryHash)`
+    ///      (EIP-191 personal_sign). Readings must arrive gap-free (`sequence == readingCount`)
+    ///      with strictly increasing timestamps: a relay cannot skip an inconvenient reading and
+    ///      continue with later ones, and no reading can be replayed.
+    /// @param telemetryHash Hash of the full off-chain telemetry record this reading summarises.
+    ///        It is part of what the sensor signs, so the device vouches not only for the
+    ///        temperature but for the exact record kept off-chain. Anyone can later re-hash the
+    ///        stored record and compare it with the `ReadingSubmitted` log: if the off-chain store
+    ///        was edited, the hashes diverge and the sensor's signature proves which side changed.
     function submitReading(
         uint256 shipmentId,
         uint32 sequence,
         int32 temperature,
         uint64 timestamp,
+        bytes32 telemetryHash,
         bytes calldata signature
     ) external exists(shipmentId) {
         Shipment storage s = _shipments[shipmentId];
         if (s.status != Status.IN_TRANSIT && s.status != Status.COMPROMISED) {
             revert InvalidStatus(shipmentId, s.status);
         }
+        if (telemetryHash == bytes32(0)) revert EmptyTelemetryHash();
         if (sequence != s.readingCount) revert SequenceMismatch(s.readingCount, sequence);
         if (timestamp < s.startedAt) revert ReadingBeforeTransit(timestamp, s.startedAt);
         if (timestamp <= s.lastReadingAt) revert StaleReading(timestamp, s.lastReadingAt);
         if (timestamp > block.timestamp + MAX_CLOCK_DRIFT) revert ReadingFromFuture(timestamp, uint64(block.timestamp));
 
-        bytes32 digest = readingDigest(shipmentId, sequence, temperature, timestamp).toEthSignedMessageHash();
+        bytes32 digest =
+            readingDigest(shipmentId, sequence, temperature, timestamp, telemetryHash).toEthSignedMessageHash();
         (address signer, ECDSA.RecoverError err,) = digest.tryRecover(signature);
         if (err != ECDSA.RecoverError.NoError || signer != s.sensor) revert InvalidSignature();
 
@@ -263,7 +361,7 @@ contract ColdChain {
         s.readingCount = sequence + 1;
 
         bool inRange = temperature >= s.minTemp && temperature <= s.maxTemp;
-        emit ReadingSubmitted(shipmentId, sequence, temperature, timestamp, msg.sender, inRange);
+        emit ReadingSubmitted(shipmentId, sequence, temperature, timestamp, telemetryHash, msg.sender, inRange);
 
         if (!inRange) _recordViolation(shipmentId, s, temperature, timestamp);
     }
@@ -354,6 +452,15 @@ contract ColdChain {
     // Views
     // ---------------------------------------------------------------------
 
+    function getSensor(address sensor) external view returns (SensorRecord memory) {
+        return _sensors[sensor];
+    }
+
+    /// @notice Whether `sensor` may be assigned to a new shipment.
+    function isSensorActive(address sensor) public view returns (bool) {
+        return _sensors[sensor].active;
+    }
+
     function getShipment(uint256 shipmentId) external view exists(shipmentId) returns (Shipment memory) {
         return _shipments[shipmentId];
     }
@@ -397,18 +504,29 @@ contract ColdChain {
     }
 
     /// @notice Raw digest a sensor must sign (before the EIP-191 prefix is applied).
-    /// @dev Bound to this chain and contract so a signature cannot be replayed elsewhere.
-    function readingDigest(uint256 shipmentId, uint32 sequence, int32 temperature, uint64 timestamp)
-        public
-        view
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(block.chainid, address(this), shipmentId, sequence, temperature, timestamp));
+    /// @dev Bound to this chain and contract so a signature cannot be replayed elsewhere, and to
+    ///      `telemetryHash` so the on-chain reading and the off-chain record stand or fall together.
+    function readingDigest(
+        uint256 shipmentId,
+        uint32 sequence,
+        int32 temperature,
+        uint64 timestamp,
+        bytes32 telemetryHash
+    ) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(block.chainid, address(this), shipmentId, sequence, temperature, timestamp, telemetryHash)
+        );
     }
 
     // ---------------------------------------------------------------------
     // Internal
     // ---------------------------------------------------------------------
+
+    function _requireActiveSensor(address sensor) private view {
+        SensorRecord storage record = _sensors[sensor];
+        if (record.registeredAt == 0) revert SensorNotRegistered(sensor);
+        if (!record.active) revert SensorInactive(sensor);
+    }
 
     /// @dev The one place the payout rule lives: the carrier is paid in full unless the penalty
     ///      applies, in which case `penaltyBps` of the escrow goes back to the manufacturer.
