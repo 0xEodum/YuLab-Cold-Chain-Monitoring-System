@@ -103,9 +103,10 @@ export function toEvent(log) {
 }
 
 /**
- * Payout split to display. While a shipment is active `previewSettlement` is authoritative;
- * once it is settled the contract's preview no longer applies the penalty (status is no longer
- * COMPROMISED), so the figures come from the settlement event instead.
+ * Payout split to display. While a shipment is active `previewSettlement` is authoritative.
+ * Once it is settled the event is: `previewSettlement` answers "what would confirmDelivery pay",
+ * which is not what an EXPIRED shipment was actually settled at (settleExpired always withholds
+ * the penalty). The event records what really happened, so it wins.
  */
 export function resolveSettlement(preview, events) {
   const settled = events.find((e) => e.name === "ShipmentDelivered" || e.name === "ShipmentExpired");

@@ -30,7 +30,7 @@ export function telemetryWarning(shipment, chainNow) {
 }
 
 export function ShipmentDetails({ data, role, provider, signerContract, chainId, onAction, run, isPending }) {
-  const { shipment, violations, anchors, settlement, readings, events, chainNow } = data;
+  const { shipment, violations, anchors, settlement, expiredSettlement, readings, events, chainNow } = data;
   const warning = telemetryWarning(shipment, chainNow);
   const active = isActiveStatus(shipment.status);
   const canAnchor = role.id === "carrier" || role.id === "manufacturer";
@@ -97,6 +97,13 @@ export function ShipmentDetails({ data, role, provider, signerContract, chainId,
             Правило зафиксировано при создании: {shipment.violationCount > 0 ? "есть нарушение — удерживается штраф" : "нет нарушений — перевозчик получает всё"}
             . Выплаты начисляются на баланс и забираются кнопкой «Вывести».
           </p>
+          {active && expiredSettlement ? (
+            <p className="muted small">
+              Без подтверждения получателя (расчёт по истечении 30 дней): перевозчику{" "}
+              {formatEth(expiredSettlement.carrierPayout)}, возврат {formatEth(expiredSettlement.manufacturerRefund)} —
+              штраф удерживается всегда, поэтому скрывать телеметрию невыгодно.
+            </p>
+          ) : null}
           <ActionsPanel
             shipment={shipment}
             roleId={role.id}

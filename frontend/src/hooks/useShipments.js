@@ -47,11 +47,12 @@ export function useShipment(contract, provider, shipmentId, blockNumber, enabled
 
     (async () => {
       try {
-        const [rawShipment, rawViolations, rawAnchors, settlement, logs, latestBlock] = await Promise.all([
+        const [rawShipment, rawViolations, rawAnchors, settlement, expiredPreview, logs, latestBlock] = await Promise.all([
           contract.getShipment(shipmentId),
           contract.getViolations(shipmentId),
           contract.getAnchors(shipmentId),
           contract.previewSettlement(shipmentId),
+          contract.previewExpiredSettlement(shipmentId),
           provider.getLogs({
             address: CONTRACT_ADDRESS,
             fromBlock: 0,
@@ -76,6 +77,7 @@ export function useShipment(contract, provider, shipmentId, blockNumber, enabled
             violations: rawViolations.map(toViolation),
             anchors: rawAnchors.map(toAnchor),
             settlement: resolveSettlement(settlement, events),
+            expiredSettlement: { carrierPayout: BigInt(expiredPreview[0]), manufacturerRefund: BigInt(expiredPreview[1]) },
             readings,
             events,
             chainNow: latestBlock.timestamp,

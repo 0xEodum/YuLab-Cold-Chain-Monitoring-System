@@ -1,4 +1,4 @@
-import { STATUS, formatDuration, isActiveStatus } from "../lib/format.js";
+import { STATUS, formatBps, formatDuration, isActiveStatus } from "../lib/format.js";
 
 const SETTLEMENT_TIMEOUT = 30 * 24 * 3600;
 
@@ -31,8 +31,8 @@ export function availableActions(shipment, roleId, chainNow) {
       disabled: settleWait > 0,
       hint:
         settleWait > 0
-          ? `Доступно через ${formatDuration(settleWait)} после начала транспортировки (30 дней), если получатель молчит.`
-          : "Получатель не подтвердил доставку 30 дней — любая из сторон может завершить расчёт.",
+          ? `Доступно через ${formatDuration(settleWait)} после начала транспортировки (30 дней), если получатель молчит. Штраф ${formatBps(shipment.penaltyBps)} удерживается в любом случае.`
+          : `Получатель не подтвердил доставку 30 дней — любая из сторон может завершить расчёт. Без подтверждения получателя штраф ${formatBps(shipment.penaltyBps)} удерживается даже без зафиксированных нарушений.`,
     });
   }
   return actions;

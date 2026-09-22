@@ -66,7 +66,13 @@ function contractFor(signerAddress) {
     getAnchors: async () => [],
     previewSettlement: async (id) => {
       const s = chain.shipments[Number(id)];
-      const refund = s.status === 2n ? (s.payment * s.penaltyBps) / 10_000n : 0n;
+      const refund = s.violationCount > 0n ? (s.payment * s.penaltyBps) / 10_000n : 0n;
+      return [s.payment - refund, refund];
+    },
+    // settleExpired always withholds the penalty: nobody confirmed the delivery.
+    previewExpiredSettlement: async (id) => {
+      const s = chain.shipments[Number(id)];
+      const refund = (s.payment * s.penaltyBps) / 10_000n;
       return [s.payment - refund, refund];
     },
     pendingWithdrawals: async (addr) => chain.pending[addr] ?? 0n,

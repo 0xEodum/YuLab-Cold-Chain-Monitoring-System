@@ -52,6 +52,14 @@ describe("availableActions mirrors the contract's access rules", () => {
     expect(availableActions(s, "manufacturer", 2000 + 30 * DAY)[0].disabled).toBe(false);
   });
 
+  test("settleExpired warns that the penalty is withheld with or without violations", () => {
+    const s = shipment({ status: 1, startedAt: 2000 });
+    for (const now of [3000, 2000 + 30 * DAY]) {
+      const [settle] = availableActions(s, "carrier", now);
+      expect(settle.hint).toMatch(/[Шш]траф 20 % удерживается/);
+    }
+  });
+
   test("terminal statuses offer nothing", () => {
     for (const status of [3, 4, 5]) {
       for (const role of ["manufacturer", "carrier", "receiver"]) {

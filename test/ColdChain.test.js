@@ -479,6 +479,7 @@ describe("ColdChain", function () {
       expect(s.deliveredAt).to.equal(await time.latest());
       expect(await ctx.coldChain.pendingWithdrawals(ctx.carrier.address)).to.equal(PAYMENT);
       expect(await ctx.coldChain.pendingWithdrawals(ctx.manufacturer.address)).to.equal(0n);
+      expect(await ctx.coldChain.hasTemperatureViolation(1)).to.equal(false);
     });
 
     it("applies the penalty split when the shipment was compromised", async function () {
@@ -501,6 +502,11 @@ describe("ColdChain", function () {
       expect(s.status).to.equal(Status.DELIVERED);
       expect(s.violationCount).to.equal(1n);
       expect(await ctx.coldChain.getViolations(1)).to.have.length(1);
+
+      // ...and so does the preview: it is keyed on violationCount, not on the transient
+      // COMPROMISED status, so a client reading it after settlement still sees the real split.
+      expect(await ctx.coldChain.hasTemperatureViolation(1)).to.equal(true);
+      expect(await ctx.coldChain.previewSettlement(1)).to.deep.equal([expectedPayout, expectedRefund]);
     });
 
     it("withholds the entire payment with a 100% penalty", async function () {
@@ -546,23 +552,53 @@ describe("ColdChain", function () {
   });
 
   describe("settleExpired", function () {
-    it("lets the carrier settle after the timeout when the receiver never confirms", async function () {
+    it("withholds the penalty even with a clean record: no receiver confirmation, no full payout", async function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
       await submitReading(ctx, 45, await time.latest());
       const timeout = await ctx.coldChain.SETTLEMENT_TIMEOUT();
       await time.increase(timeout);
 
+      const expectedRefund = (PAYMENT * BigInt(PENALTY_BPS)) / 10_000n; // 0.2 ETH
+      const expectedPayout = PAYMENT - expectedRefund; // 0.8 ETH
+      // confirmDelivery would pay in full; settling without the receiver does not.
+      expect(await ctx.coldChain.previewSettlement(1)).to.deep.equal([PAYMENT, 0n]);
+      expect(await ctx.coldChain.previewExpiredSettlement(1)).to.deep.equal([expectedPayout, expectedRefund]);
+
       await expect(ctx.coldChain.connect(ctx.carrier).settleExpired(1))
         .to.emit(ctx.coldChain, "ShipmentExpired")
-        .withArgs(1n, ctx.carrier.address, PAYMENT, 0n);
+        .withArgs(1n, ctx.carrier.address, expectedPayout, expectedRefund);
 
       const s = await ctx.coldChain.getShipment(1);
       expect(s.status).to.equal(Status.EXPIRED);
       expect(s.deliveredAt).to.equal(await time.latest());
-      expect(await ctx.coldChain.pendingWithdrawals(ctx.carrier.address)).to.equal(PAYMENT);
+      expect(await ctx.coldChain.pendingWithdrawals(ctx.carrier.address)).to.equal(expectedPayout);
+      expect(await ctx.coldChain.pendingWithdrawals(ctx.manufacturer.address)).to.equal(expectedRefund);
     });
 
-    it("still applies the penalty when the manufacturer settles a compromised shipment", async function () {
+    it("gives a silent carrier nothing to gain by withholding telemetry", async function () {
+      // The attack the rule closes: the gateway reports nothing at all, so violationCount stays 0,
+      // and after the timeout the carrier claims a "flawless" delivery. Shipment #1 is silent,
+      // #2 reports an excursion honestly — both must settle identically.
+      const ctx = await networkHelpers.loadFixture(inTransitFixture);
+      await createShipment(ctx);
+      await ctx.coldChain.connect(ctx.carrier).startTransit(2);
+      await submitReading(ctx, 127, await time.latest(), { shipmentId: 2n });
+      await time.increase(await ctx.coldChain.SETTLEMENT_TIMEOUT());
+
+      expect((await ctx.coldChain.getShipment(1)).readingCount).to.equal(0n);
+      expect(await ctx.coldChain.previewExpiredSettlement(1)).to.deep.equal(
+        await ctx.coldChain.previewExpiredSettlement(2),
+      );
+
+      await ctx.coldChain.connect(ctx.carrier).settleExpired(1);
+      const silentPayout = await ctx.coldChain.pendingWithdrawals(ctx.carrier.address);
+      await ctx.coldChain.connect(ctx.carrier).settleExpired(2);
+      const honestPayout = (await ctx.coldChain.pendingWithdrawals(ctx.carrier.address)) - silentPayout;
+
+      expect(silentPayout).to.equal(honestPayout);
+    });
+
+    it("applies the same penalty when the manufacturer settles a compromised shipment", async function () {
       const ctx = await networkHelpers.loadFixture(inTransitFixture);
       await submitReading(ctx, 127, await time.latest());
       await time.increase(await ctx.coldChain.SETTLEMENT_TIMEOUT());

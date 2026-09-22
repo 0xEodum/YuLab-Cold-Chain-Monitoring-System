@@ -16,7 +16,7 @@
 
 ```bash
 npm install
-npm test                 # 51 тест
+npm test                 # 52 теста
 npm run coverage         # покрытие ColdChain.sol — 100 %
 npm run demo             # сквозной сценарий из §9 документации на in-process сети
 ```
@@ -66,9 +66,9 @@ CREATED ──startTransit(carrier)──▶ IN_TRANSIT ──violation──▶
 | `submitReading(id, sequence, temperature, timestamp, signature)` | Любой relay (шлюз) | Показание, подписанное ключом датчика; вне диапазона → `TemperatureViolation` + `COMPROMISED` |
 | `anchorTelemetry(id, hash, from, to)` | Carrier / Manufacturer | Якорит хэш off-chain батча телеметрии |
 | `confirmDelivery(id)` | Receiver | Завершение; расчёт выплат по правилу, зафиксированному при создании |
-| `settleExpired(id)` | Carrier / Manufacturer | Тот же расчёт, если получатель не подтвердил доставку за `SETTLEMENT_TIMEOUT` (30 дней) — escrow не может зависнуть навсегда |
+| `settleExpired(id)` | Carrier / Manufacturer | Расчёт, если получатель не подтвердил доставку за `SETTLEMENT_TIMEOUT` (30 дней) — escrow не может зависнуть навсегда. Штраф удерживается **всегда**: подтверждения доставки нет |
 | `withdraw()` | Carrier / Manufacturer | Забрать начисленное (pull-payment) |
-| `getShipment / getViolations / getAnchors / previewSettlement / readingDigest` | view | Данные для фронтенда |
+| `getShipment / getViolations / getAnchors / previewSettlement / previewExpiredSettlement / hasTemperatureViolation / readingDigest` | view | Данные для фронтенда |
 
 Ключевые решения:
 
@@ -82,8 +82,12 @@ CREATED ──startTransit(carrier)──▶ IN_TRANSIT ──violation──▶
   либо обрывается, и обрыв виден всем участникам.
 - **Защита от повтора.** Таймстампы датчика строго возрастают (`StaleReading`), не раньше `startedAt` и не дальше
   `block.timestamp + 15 min` (`ReadingFromFuture`). Дайджест привязан к chainId и адресу контракта.
-- **Финансовое правило.** `penaltyBps` (базисные пункты) фиксируется при создании. При `COMPROMISED`:
+- **Финансовое правило.** `penaltyBps` (базисные пункты) фиксируется при создании. Если штраф применяется —
   перевозчику `payment × (1 − penalty)`, производителю возврат `payment × penalty`. Выплаты — pull-паттерн (`pendingWithdrawals` + `withdraw()`).
+  Штраф применяется при `violationCount > 0` (неизменяемый факт, а не текущий статус) **или** при расчёте через
+  `settleExpired`. Последнее — потому что подтвердить факт доставки может только получатель; его молчание не является
+  доказательством успеха, а «ноль нарушений» перевозчик, управляющий шлюзом, получает простым сокрытием телеметрии.
+  Так скрывать показания становится не выгоднее, чем честно передать нарушение.
 - **On-chain / off-chain.** Каждое показание попадает в событие `ReadingSubmitted` (дёшево, фронтенд читает историю по логам),
   в storage пишутся только нарушения и якоря хэшей батчей.
 
@@ -137,7 +141,7 @@ frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentD
 
 Технически: `frontend/src/lib/chain.js` берёт адрес и ABI из `deployments/localhost.json`, подпись показаний
 переиспользует `scripts/lib/sensor.js` (тот же код, что у CLI-шлюза). Состояние перечитывается при появлении нового
-блока (опрос `eth_blockNumber` раз в секунду). Тесты: `npm run frontend:test` — 43 теста, включая сквозной сценарий
+блока (опрос `eth_blockNumber` раз в секунду). Тесты: `npm run frontend:test` — 44 теста, включая сквозной сценарий
 на in-memory заглушке контракта; покрытие ~93 %.
 
 ## Для фронтенда (справочно)
@@ -146,7 +150,9 @@ frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentD
 - Роли — стандартные аккаунты Hardhat: `#1` manufacturer, `#2` carrier, `#3` receiver, `#9` — ключ демо-датчика
   (см. `scripts/lib/accounts.js`; это публичные тестовые ключи, только для локальной сети).
 - История поставки: `getShipment`, `getViolations`, `getAnchors` + фильтр событий `ReadingSubmitted(shipmentId)`.
-- Расчёт выплат до завершения: `previewSettlement(id)`.
+- Расчёт выплат: `previewSettlement(id)` — как рассчитается `confirmDelivery`; `previewExpiredSettlement(id)` — как рассчитается
+  `settleExpired`. Оба опираются на `violationCount`, а не на текущий статус, поэтому остаются верными и после расчёта.
+  Фактический итог завершённой поставки всегда есть в событии `ShipmentDelivered` / `ShipmentExpired`.
 - Ошибки контракта — custom errors (`Unauthorized`, `InvalidStatus`, `InvalidSignature`, …), их удобно декодировать через `interface.parseError`.
 
 ## Известные ограничения (осознанно за рамками MVP)
@@ -155,5 +161,8 @@ frontend/src/components/             RoleSwitcher, CreateShipmentForm, ShipmentD
   контракт не требует минимального числа показаний для расчёта. Обрыв истории виден on-chain (`readingCount`, отсутствие
   `ReadingSubmitted`), и получатель видит это до `confirmDelivery`, но автоматической санкции нет: для этого нужна логика
   споров/арбитража. Фронтенд должен явно показывать предупреждение «телеметрия отсутствует/оборвана».
+  Частично закрыто в `settleExpired`: без подтверждения получателя штраф удерживается даже при нулевом `violationCount`,
+  поэтому молчание перевозчику выгоднее честного нарушения не делает. Но при `confirmDelivery` получатель по-прежнему
+  подтверждает доставку «на глаз» — полноценный арбитраж вне MVP.
 - `anchorTelemetry` — только аудиторский след (хэш off-chain батча), в расчёте выплат не участвует.
 - Компрометация физического датчика, несколько датчиков на поставку, оплата ERC-20, деплой в публичную сеть.

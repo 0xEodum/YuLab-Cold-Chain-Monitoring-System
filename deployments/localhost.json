@@ -7,885 +7,1024 @@
   "deployedAt": "2026-09-18T06:58:11.547Z",
   "abi": [
     {
-      "type": "error",
-      "name": "InvalidAnchorRange",
       "inputs": [
         {
-          "type": "uint64",
-          "name": "fromTimestamp"
-        },
-        {
-          "type": "uint64",
-          "name": "toTimestamp"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "InvalidPenalty",
-      "inputs": [
-        {
-          "type": "uint16",
-          "name": "penaltyBps"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "InvalidSignature",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "InvalidStatus",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        },
-        {
-          "type": "uint8",
-          "name": "current"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "InvalidTemperatureRange",
-      "inputs": [
-        {
-          "type": "int32",
-          "name": "minTemp"
-        },
-        {
-          "type": "int32",
-          "name": "maxTemp"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NothingToWithdraw",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "ReadingBeforeTransit",
-      "inputs": [
-        {
-          "type": "uint64",
-          "name": "timestamp"
-        },
-        {
-          "type": "uint64",
-          "name": "startedAt"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ReadingFromFuture",
-      "inputs": [
-        {
-          "type": "uint64",
-          "name": "timestamp"
-        },
-        {
-          "type": "uint64",
-          "name": "blockTimestamp"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SequenceMismatch",
-      "inputs": [
-        {
-          "type": "uint32",
-          "name": "expected"
-        },
-        {
-          "type": "uint32",
-          "name": "actual"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SettlementNotYetAvailable",
-      "inputs": [
-        {
-          "type": "uint64",
-          "name": "availableAt"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ShipmentNotFound",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "StaleReading",
-      "inputs": [
-        {
-          "type": "uint64",
-          "name": "timestamp"
-        },
-        {
-          "type": "uint64",
-          "name": "lastReadingAt"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "TransferFailed",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "Unauthorized",
-      "inputs": [
-        {
-          "type": "address",
-          "name": "caller"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ZeroAddress",
-      "inputs": [
-        {
-          "type": "string",
-          "name": "field"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "ZeroPayment",
-      "inputs": []
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "ReadingSubmitted",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "uint32",
-          "name": "sequence",
-          "indexed": false
-        },
-        {
-          "type": "int32",
-          "name": "temperature",
-          "indexed": false
-        },
-        {
-          "type": "uint64",
-          "name": "timestamp",
-          "indexed": false
-        },
-        {
-          "type": "address",
-          "name": "reporter",
-          "indexed": true
-        },
-        {
-          "type": "bool",
-          "name": "inRange",
-          "indexed": false
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "ShipmentCancelled",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "uint256",
-          "name": "refund",
-          "indexed": false
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "ShipmentCreated",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "address",
-          "name": "manufacturer",
-          "indexed": true
-        },
-        {
-          "type": "address",
-          "name": "carrier",
-          "indexed": true
-        },
-        {
-          "type": "address",
-          "name": "receiver",
-          "indexed": false
-        },
-        {
-          "type": "address",
-          "name": "sensor",
-          "indexed": false
-        },
-        {
-          "type": "int32",
-          "name": "minTemp",
-          "indexed": false
-        },
-        {
-          "type": "int32",
-          "name": "maxTemp",
-          "indexed": false
-        },
-        {
-          "type": "uint256",
-          "name": "payment",
-          "indexed": false
-        },
-        {
-          "type": "uint16",
-          "name": "penaltyBps",
-          "indexed": false
-        },
-        {
-          "type": "string",
-          "name": "product",
-          "indexed": false
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "ShipmentDelivered",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "address",
-          "name": "receiver",
-          "indexed": true
-        },
-        {
-          "type": "uint64",
-          "name": "timestamp",
-          "indexed": false
-        },
-        {
-          "type": "uint256",
-          "name": "carrierPayout",
-          "indexed": false
-        },
-        {
-          "type": "uint256",
-          "name": "manufacturerRefund",
-          "indexed": false
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "ShipmentExpired",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "address",
-          "name": "settledBy",
-          "indexed": true
-        },
-        {
-          "type": "uint256",
-          "name": "carrierPayout",
-          "indexed": false
-        },
-        {
-          "type": "uint256",
-          "name": "manufacturerRefund",
-          "indexed": false
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "ShipmentStarted",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "address",
-          "name": "carrier",
-          "indexed": true
-        },
-        {
-          "type": "uint64",
-          "name": "timestamp",
-          "indexed": false
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "anonymous": false,
-      "name": "TelemetryAnchored",
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId",
-          "indexed": true
-        },
-        {
-          "type": "bytes32",
-          "name": "dataHash",
-          "indexed": false
-        },
-        {
-          "type": "uint64",
+          "internalType": "uint64",
           "name": "fromTimestamp",
-          "indexed": false
+          "type": "uint64"
         },
         {
-          "type": "uint64",
+          "internalType": "uint64",
           "name": "toTimestamp",
-          "indexed": false
-        },
-        {
-          "type": "address",
-          "name": "anchoredBy",
-          "indexed": true
+          "type": "uint64"
         }
-      ]
+      ],
+      "name": "InvalidAnchorRange",
+      "type": "error"
     },
     {
-      "type": "event",
-      "anonymous": false,
-      "name": "TemperatureViolation",
       "inputs": [
         {
-          "type": "uint256",
+          "internalType": "uint16",
+          "name": "penaltyBps",
+          "type": "uint16"
+        }
+      ],
+      "name": "InvalidPenalty",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidSignature",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
           "name": "shipmentId",
-          "indexed": true
+          "type": "uint256"
         },
         {
-          "type": "int32",
-          "name": "temperature",
-          "indexed": false
+          "internalType": "enum ColdChain.Status",
+          "name": "current",
+          "type": "uint8"
+        }
+      ],
+      "name": "InvalidStatus",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "int32",
+          "name": "minTemp",
+          "type": "int32"
         },
         {
-          "type": "uint64",
+          "internalType": "int32",
+          "name": "maxTemp",
+          "type": "int32"
+        }
+      ],
+      "name": "InvalidTemperatureRange",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NothingToWithdraw",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
           "name": "timestamp",
-          "indexed": false
+          "type": "uint64"
         },
         {
-          "type": "uint32",
-          "name": "violationIndex",
-          "indexed": false
+          "internalType": "uint64",
+          "name": "startedAt",
+          "type": "uint64"
         }
-      ]
+      ],
+      "name": "ReadingBeforeTransit",
+      "type": "error"
     },
     {
-      "type": "event",
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "blockTimestamp",
+          "type": "uint64"
+        }
+      ],
+      "name": "ReadingFromFuture",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint32",
+          "name": "expected",
+          "type": "uint32"
+        },
+        {
+          "internalType": "uint32",
+          "name": "actual",
+          "type": "uint32"
+        }
+      ],
+      "name": "SequenceMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "availableAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "SettlementNotYetAvailable",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
+      "name": "ShipmentNotFound",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "lastReadingAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "StaleReading",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TransferFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "caller",
+          "type": "address"
+        }
+      ],
+      "name": "Unauthorized",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "field",
+          "type": "string"
+        }
+      ],
+      "name": "ZeroAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroPayment",
+      "type": "error"
+    },
+    {
       "anonymous": false,
-      "name": "Withdrawal",
       "inputs": [
         {
-          "type": "address",
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "sequence",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "temperature",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "reporter",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "inRange",
+          "type": "bool"
+        }
+      ],
+      "name": "ReadingSubmitted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "refund",
+          "type": "uint256"
+        }
+      ],
+      "name": "ShipmentCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "manufacturer",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "carrier",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "receiver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "sensor",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "minTemp",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "maxTemp",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "payment",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint16",
+          "name": "penaltyBps",
+          "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "product",
+          "type": "string"
+        }
+      ],
+      "name": "ShipmentCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "receiver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "carrierPayout",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "manufacturerRefund",
+          "type": "uint256"
+        }
+      ],
+      "name": "ShipmentDelivered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "settledBy",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "carrierPayout",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "manufacturerRefund",
+          "type": "uint256"
+        }
+      ],
+      "name": "ShipmentExpired",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "carrier",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        }
+      ],
+      "name": "ShipmentStarted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "dataHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "fromTimestamp",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "toTimestamp",
+          "type": "uint64"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "anchoredBy",
+          "type": "address"
+        }
+      ],
+      "name": "TelemetryAnchored",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "int32",
+          "name": "temperature",
+          "type": "int32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "violationIndex",
+          "type": "uint32"
+        }
+      ],
+      "name": "TemperatureViolation",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
           "name": "account",
-          "indexed": true
+          "type": "address"
         },
         {
-          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256",
           "name": "amount",
-          "indexed": false
+          "type": "uint256"
         }
-      ]
+      ],
+      "name": "Withdrawal",
+      "type": "event"
     },
     {
-      "type": "function",
+      "inputs": [],
       "name": "MAX_BPS",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [],
       "outputs": [
         {
-          "type": "uint16",
-          "name": ""
+          "internalType": "uint16",
+          "name": "",
+          "type": "uint16"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [],
       "name": "MAX_CLOCK_DRIFT",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [],
       "outputs": [
         {
-          "type": "uint64",
-          "name": ""
+          "internalType": "uint64",
+          "name": "",
+          "type": "uint64"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [],
       "name": "SETTLEMENT_TIMEOUT",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [],
       "outputs": [
         {
-          "type": "uint64",
-          "name": ""
+          "internalType": "uint64",
+          "name": "",
+          "type": "uint64"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "dataHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "fromTimestamp",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "toTimestamp",
+          "type": "uint64"
+        }
+      ],
       "name": "anchorTelemetry",
-      "constant": false,
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        },
-        {
-          "type": "bytes32",
-          "name": "dataHash"
-        },
-        {
-          "type": "uint64",
-          "name": "fromTimestamp"
-        },
-        {
-          "type": "uint64",
-          "name": "toTimestamp"
-        }
-      ],
-      "outputs": []
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "cancelShipment",
-      "constant": false,
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
-      "outputs": []
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "confirmDelivery",
-      "constant": false,
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
-      "outputs": []
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "product",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "carrier",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "receiver",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "sensor",
+          "type": "address"
+        },
+        {
+          "internalType": "int32",
+          "name": "minTemp",
+          "type": "int32"
+        },
+        {
+          "internalType": "int32",
+          "name": "maxTemp",
+          "type": "int32"
+        },
+        {
+          "internalType": "uint16",
+          "name": "penaltyBps",
+          "type": "uint16"
+        }
+      ],
       "name": "createShipment",
-      "constant": false,
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "stateMutability": "payable",
-      "payable": true,
-      "inputs": [
-        {
-          "type": "string",
-          "name": "product"
-        },
-        {
-          "type": "address",
-          "name": "carrier"
-        },
-        {
-          "type": "address",
-          "name": "receiver"
-        },
-        {
-          "type": "address",
-          "name": "sensor"
-        },
-        {
-          "type": "int32",
-          "name": "minTemp"
-        },
-        {
-          "type": "int32",
-          "name": "maxTemp"
-        },
-        {
-          "type": "uint16",
-          "name": "penaltyBps"
-        }
-      ],
-      "outputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ]
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "getAnchors",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
       "outputs": [
         {
-          "type": "tuple[]",
-          "name": "",
           "components": [
             {
-              "type": "bytes32",
-              "name": "dataHash"
+              "internalType": "bytes32",
+              "name": "dataHash",
+              "type": "bytes32"
             },
             {
-              "type": "uint64",
-              "name": "fromTimestamp"
+              "internalType": "uint64",
+              "name": "fromTimestamp",
+              "type": "uint64"
             },
             {
-              "type": "uint64",
-              "name": "toTimestamp"
+              "internalType": "uint64",
+              "name": "toTimestamp",
+              "type": "uint64"
             },
             {
-              "type": "address",
-              "name": "anchoredBy"
+              "internalType": "address",
+              "name": "anchoredBy",
+              "type": "address"
             },
             {
-              "type": "uint64",
-              "name": "anchoredAt"
+              "internalType": "uint64",
+              "name": "anchoredAt",
+              "type": "uint64"
             }
-          ]
+          ],
+          "internalType": "struct ColdChain.TelemetryAnchor[]",
+          "name": "",
+          "type": "tuple[]"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "getShipment",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
       "outputs": [
         {
-          "type": "tuple",
-          "name": "",
           "components": [
             {
-              "type": "address",
-              "name": "manufacturer"
+              "internalType": "address",
+              "name": "manufacturer",
+              "type": "address"
             },
             {
-              "type": "address",
-              "name": "carrier"
+              "internalType": "address",
+              "name": "carrier",
+              "type": "address"
             },
             {
-              "type": "address",
-              "name": "receiver"
+              "internalType": "address",
+              "name": "receiver",
+              "type": "address"
             },
             {
-              "type": "address",
-              "name": "sensor"
+              "internalType": "address",
+              "name": "sensor",
+              "type": "address"
             },
             {
-              "type": "int32",
-              "name": "minTemp"
+              "internalType": "int32",
+              "name": "minTemp",
+              "type": "int32"
             },
             {
-              "type": "int32",
-              "name": "maxTemp"
+              "internalType": "int32",
+              "name": "maxTemp",
+              "type": "int32"
             },
             {
-              "type": "uint16",
-              "name": "penaltyBps"
+              "internalType": "uint16",
+              "name": "penaltyBps",
+              "type": "uint16"
             },
             {
-              "type": "uint8",
-              "name": "status"
+              "internalType": "enum ColdChain.Status",
+              "name": "status",
+              "type": "uint8"
             },
             {
-              "type": "uint64",
-              "name": "createdAt"
+              "internalType": "uint64",
+              "name": "createdAt",
+              "type": "uint64"
             },
             {
-              "type": "uint64",
-              "name": "startedAt"
+              "internalType": "uint64",
+              "name": "startedAt",
+              "type": "uint64"
             },
             {
-              "type": "uint64",
-              "name": "deliveredAt"
+              "internalType": "uint64",
+              "name": "deliveredAt",
+              "type": "uint64"
             },
             {
-              "type": "uint64",
-              "name": "lastReadingAt"
+              "internalType": "uint64",
+              "name": "lastReadingAt",
+              "type": "uint64"
             },
             {
-              "type": "uint32",
-              "name": "readingCount"
+              "internalType": "uint32",
+              "name": "readingCount",
+              "type": "uint32"
             },
             {
-              "type": "uint32",
-              "name": "violationCount"
+              "internalType": "uint32",
+              "name": "violationCount",
+              "type": "uint32"
             },
             {
-              "type": "uint256",
-              "name": "payment"
+              "internalType": "uint256",
+              "name": "payment",
+              "type": "uint256"
             },
             {
-              "type": "string",
-              "name": "product"
+              "internalType": "string",
+              "name": "product",
+              "type": "string"
             }
-          ]
+          ],
+          "internalType": "struct ColdChain.Shipment",
+          "name": "",
+          "type": "tuple"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "getViolations",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
       "outputs": [
         {
-          "type": "tuple[]",
-          "name": "",
           "components": [
             {
-              "type": "int32",
-              "name": "temperature"
+              "internalType": "int32",
+              "name": "temperature",
+              "type": "int32"
             },
             {
-              "type": "uint64",
-              "name": "timestamp"
+              "internalType": "uint64",
+              "name": "timestamp",
+              "type": "uint64"
             },
             {
-              "type": "uint64",
-              "name": "recordedAt"
+              "internalType": "uint64",
+              "name": "recordedAt",
+              "type": "uint64"
             }
-          ]
+          ],
+          "internalType": "struct ColdChain.Violation[]",
+          "name": "",
+          "type": "tuple[]"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
+      "name": "hasTemperatureViolation",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
       "name": "pendingWithdrawals",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [
-        {
-          "type": "address",
-          "name": "account"
-        }
-      ],
       "outputs": [
         {
-          "type": "uint256",
-          "name": ""
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
+      "name": "previewExpiredSettlement",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "carrierPayout",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "manufacturerRefund",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "previewSettlement",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
       "outputs": [
         {
-          "type": "uint256",
-          "name": "carrierPayout"
+          "internalType": "uint256",
+          "name": "carrierPayout",
+          "type": "uint256"
         },
         {
-          "type": "uint256",
-          "name": "manufacturerRefund"
+          "internalType": "uint256",
+          "name": "manufacturerRefund",
+          "type": "uint256"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint32",
+          "name": "sequence",
+          "type": "uint32"
+        },
+        {
+          "internalType": "int32",
+          "name": "temperature",
+          "type": "int32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        }
+      ],
       "name": "readingDigest",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        },
-        {
-          "type": "uint32",
-          "name": "sequence"
-        },
-        {
-          "type": "int32",
-          "name": "temperature"
-        },
-        {
-          "type": "uint64",
-          "name": "timestamp"
-        }
-      ],
       "outputs": [
         {
-          "type": "bytes32",
-          "name": ""
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "settleExpired",
-      "constant": false,
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
-      "outputs": []
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
-      "type": "function",
-      "name": "shipmentCount",
-      "constant": true,
-      "stateMutability": "view",
-      "payable": false,
       "inputs": [],
+      "name": "shipmentCount",
       "outputs": [
         {
-          "type": "uint256",
-          "name": ""
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        }
+      ],
       "name": "startTransit",
-      "constant": false,
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        }
-      ],
-      "outputs": []
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
-      "type": "function",
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "shipmentId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint32",
+          "name": "sequence",
+          "type": "uint32"
+        },
+        {
+          "internalType": "int32",
+          "name": "temperature",
+          "type": "int32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "timestamp",
+          "type": "uint64"
+        },
+        {
+          "internalType": "bytes",
+          "name": "signature",
+          "type": "bytes"
+        }
+      ],
       "name": "submitReading",
-      "constant": false,
-      "payable": false,
-      "inputs": [
-        {
-          "type": "uint256",
-          "name": "shipmentId"
-        },
-        {
-          "type": "uint32",
-          "name": "sequence"
-        },
-        {
-          "type": "int32",
-          "name": "temperature"
-        },
-        {
-          "type": "uint64",
-          "name": "timestamp"
-        },
-        {
-          "type": "bytes",
-          "name": "signature"
-        }
-      ],
-      "outputs": []
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
-      "type": "function",
-      "name": "withdraw",
-      "constant": false,
-      "payable": false,
       "inputs": [],
-      "outputs": []
+      "name": "withdraw",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     }
   ]
 }

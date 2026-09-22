@@ -42,6 +42,7 @@ const fakeContract = {
   getViolations: vi.fn(async () => [{ temperature: 127n, timestamp: 3n, recordedAt: 4n }]),
   getAnchors: vi.fn(async () => [{ dataHash: "0x" + "ab".repeat(32), fromTimestamp: 1n, toTimestamp: 3n, anchoredBy: ROLES[1].wallet.address, anchoredAt: 5n }]),
   previewSettlement: vi.fn(async () => [800n, 200n]),
+  previewExpiredSettlement: vi.fn(async () => [800n, 200n]),
   pendingWithdrawals: vi.fn(async () => 5n),
 };
 

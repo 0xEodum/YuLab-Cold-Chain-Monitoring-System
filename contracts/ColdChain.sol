@@ -306,14 +306,20 @@ contract ColdChain {
             revert InvalidStatus(shipmentId, s.status);
         }
 
-        (uint256 carrierPayout, uint256 manufacturerRefund) = _settle(shipmentId, s, Status.DELIVERED);
+        (uint256 carrierPayout, uint256 manufacturerRefund) = _settle(s, Status.DELIVERED, s.violationCount > 0);
 
         emit ShipmentDelivered(shipmentId, msg.sender, s.deliveredAt, carrierPayout, manufacturerRefund);
     }
 
     /// @notice Settle a shipment whose receiver never confirmed, once SETTLEMENT_TIMEOUT has
-    ///         passed since transit started. Callable by the carrier or the manufacturer;
-    ///         the same penalty rule applies, so recorded violations are still honoured.
+    ///         passed since transit started. Callable by the carrier or the manufacturer, so a
+    ///         silent receiver can never lock the escrow forever.
+    /// @dev The penalty is withheld unconditionally here, even with zero recorded violations.
+    ///      Only the receiver can attest that the goods actually arrived; without that attestation
+    ///      the contract has no proof of a successful delivery, and an absence of violations is not
+    ///      one — a carrier that controls the gateway can produce it simply by withholding
+    ///      telemetry. Settling at the penalised split makes silence no more profitable than a
+    ///      reported excursion, so there is nothing to gain by hiding readings.
     function settleExpired(uint256 shipmentId) external exists(shipmentId) {
         Shipment storage s = _shipments[shipmentId];
         if (msg.sender != s.carrier && msg.sender != s.manufacturer) revert Unauthorized(msg.sender);
@@ -323,7 +329,7 @@ contract ColdChain {
         uint64 availableAt = s.startedAt + SETTLEMENT_TIMEOUT;
         if (block.timestamp < availableAt) revert SettlementNotYetAvailable(availableAt);
 
-        (uint256 carrierPayout, uint256 manufacturerRefund) = _settle(shipmentId, s, Status.EXPIRED);
+        (uint256 carrierPayout, uint256 manufacturerRefund) = _settle(s, Status.EXPIRED, true);
 
         emit ShipmentExpired(shipmentId, msg.sender, carrierPayout, manufacturerRefund);
     }
@@ -360,7 +366,10 @@ contract ColdChain {
         return _anchors[shipmentId];
     }
 
-    /// @notice Payout split that `confirmDelivery` would apply right now.
+    /// @notice Payout split `confirmDelivery` applies: the penalty is withheld iff a temperature
+    ///         violation was recorded.
+    /// @dev Keyed on `violationCount`, an immutable fact, not on `status` — so the answer stays
+    ///      correct after the shipment has moved on to DELIVERED.
     function previewSettlement(uint256 shipmentId)
         public
         view
@@ -368,10 +377,23 @@ contract ColdChain {
         returns (uint256 carrierPayout, uint256 manufacturerRefund)
     {
         Shipment storage s = _shipments[shipmentId];
-        if (s.status == Status.COMPROMISED) {
-            manufacturerRefund = (s.payment * s.penaltyBps) / MAX_BPS;
-        }
-        carrierPayout = s.payment - manufacturerRefund;
+        return _split(s, s.violationCount > 0);
+    }
+
+    /// @notice Payout split `settleExpired` applies: the penalty is always withheld, because
+    ///         nobody confirmed the delivery. See `settleExpired` for the rationale.
+    function previewExpiredSettlement(uint256 shipmentId)
+        public
+        view
+        exists(shipmentId)
+        returns (uint256 carrierPayout, uint256 manufacturerRefund)
+    {
+        return _split(_shipments[shipmentId], true);
+    }
+
+    /// @notice True once a temperature violation has been recorded, whatever the current status.
+    function hasTemperatureViolation(uint256 shipmentId) external view exists(shipmentId) returns (bool) {
+        return _shipments[shipmentId].violationCount > 0;
     }
 
     /// @notice Raw digest a sensor must sign (before the EIP-191 prefix is applied).
@@ -388,12 +410,23 @@ contract ColdChain {
     // Internal
     // ---------------------------------------------------------------------
 
+    /// @dev The one place the payout rule lives: the carrier is paid in full unless the penalty
+    ///      applies, in which case `penaltyBps` of the escrow goes back to the manufacturer.
+    function _split(Shipment storage s, bool penalise)
+        private
+        view
+        returns (uint256 carrierPayout, uint256 manufacturerRefund)
+    {
+        if (penalise) manufacturerRefund = (s.payment * s.penaltyBps) / MAX_BPS;
+        carrierPayout = s.payment - manufacturerRefund;
+    }
+
     /// @dev Applies the settlement rule and credits pull-payment balances. Caller emits the event.
-    function _settle(uint256 shipmentId, Shipment storage s, Status finalStatus)
+    function _settle(Shipment storage s, Status finalStatus, bool penalise)
         private
         returns (uint256 carrierPayout, uint256 manufacturerRefund)
     {
-        (carrierPayout, manufacturerRefund) = previewSettlement(shipmentId);
+        (carrierPayout, manufacturerRefund) = _split(s, penalise);
 
         s.status = finalStatus;
         s.deliveredAt = uint64(block.timestamp);
